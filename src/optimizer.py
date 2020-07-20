@@ -1,8 +1,8 @@
 import tensorflow as tf
 
 
-def get_optimizer(steps_per_epoch, lr_max, lr_min,
-                  decay_epochs, warmup_epochs, power=1):
+def get_optimizer(opt, steps_per_epoch, lr_max, lr_min,
+                  warmup_epochs, decay_epochs, power=1):
 
     if decay_epochs > 0:
         learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
@@ -23,7 +23,11 @@ def get_optimizer(steps_per_epoch, lr_max, lr_min,
             power=power,
         )
 
-    return tf.keras.optimizers.Adam(learning_rate_fn)
+    if opt == 'sgd':
+        return tf.keras.optimizers.SGD(learning_rate_fn, momentum=0.9)
+    else:
+        # adam
+        return tf.keras.optimizers.Adam(learning_rate_fn)
 
 
 class WarmUp(tf.keras.optimizers.schedules.LearningRateSchedule):
