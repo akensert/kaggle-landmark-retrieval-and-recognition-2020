@@ -117,14 +117,20 @@ class GlobalGeMPooling2D(tf.keras.layers.Layer):
         https://arxiv.org/pdf/1711.02512.pdf
         https://arxiv.org/pdf/1811.00202.pdf
     '''
-    def __init__(self, initial_p=3., trainable=False, **kwargs):
+    def __init__(self, initial_p=1., trainable=False, **kwargs):
         super(GlobalGeMPooling2D, self).__init__(**kwargs)
+        self.initial_p = initial_p
+        self.trainable = trainable
 
-        self.p = tf.Variable(
-            initial_value=initial_p,
-            trainable=trainable,
-            dtype=tf.float16 # float16 if mixed_precision is True
-        )
+    def build(self, input_shape):
+        super(GlobalGeMPooling2D, self).build(input_shape)
+        self.p = self.add_weight(
+            name='p',
+            shape=(),
+            initializer=tf.constant_initializer(value=self.initial_p),
+            dtype='float32',
+            trainable=self.trainable,
+            regularizer=None)
 
     def call(self, inputs, **kwargs):
         inputs = tf.clip_by_value(

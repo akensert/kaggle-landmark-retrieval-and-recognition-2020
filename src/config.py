@@ -1,7 +1,7 @@
 
 
 config = {
-    'optimizer': 'sgd',              # 'sgd' or 'adam'
+    'optimizer': 'sgd',              # 'sgd' (momentum=0.9) or 'adam'
     'learning_rate': {
         'max': 1e-3,
         'min': 1e-4,
