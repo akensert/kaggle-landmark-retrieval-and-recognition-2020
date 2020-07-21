@@ -4,7 +4,7 @@ import math
 
 class ArcMarginProduct(tf.keras.layers.Layer):
     '''
-    Implements large arc margin distance.
+    Implements large margin arc distance.
 
     Reference:
         https://arxiv.org/pdf/1801.07698.pdf
@@ -64,7 +64,7 @@ class ArcMarginProduct(tf.keras.layers.Layer):
 
 class AddMarginProduct(tf.keras.layers.Layer):
     '''
-    Implements large arc margin distance.
+    Implements large margin cosine distance.
 
     Reference:
         https://arxiv.org/pdf/1801.07698.pdf

@@ -39,7 +39,8 @@ output_filepath = args.output_filepath
 ])
 def serving(input_image):
     input_image = preprocess_input(
-        input_image, config['input_size'][:2], config['pad_on_resize'])
+        input_image, config['input_size'][:2],
+        config['pad_on_resize'],  augment=False)
     input_image = tf.expand_dims(
        input_image, 0, name='image/expand_dims')
     features = model(input_image)[0]
@@ -51,6 +52,7 @@ def serving(input_image):
 model = create_model(
     input_shape=config['input_size'],
     n_classes=config['n_classes'],
+    pretrained_weights=None,
     dense_units=config['dense_units'],
     dropout_rate=config['dropout_rate'],
     regularization_factor=config['regularization_factor'],
@@ -82,7 +84,7 @@ f = model_loaded.signatures["serving_default"]
 test1 = f(input_image=image)['global_descriptor']
 
 image = preprocess_input(
-    image, config['input_size'][:2], config['pad_on_resize'])
+    image, config['input_size'][:2], config['pad_on_resize'], augment=False)
 test2 = model(image[tf.newaxis,...])[0]
 test2 = tf.math.l2_normalize(test2)
 print('served model output =  ', test1.numpy()[:10])
