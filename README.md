@@ -1,3 +1,3 @@
-## siim-isic-melanoma-classification
+## landmark-retrieval-2020 
 
 Work in progress
