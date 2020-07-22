@@ -5,7 +5,7 @@ import math
 from model import create_model, DistributedModel
 from generator import create_triplet_dataset, create_singlet_dataset
 from optimizer import get_optimizer
-from config import config
+from config import config_1 as config
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 num_gpus = len(gpus)
@@ -46,7 +46,7 @@ with strategy.scope():
 
     optimizer = get_optimizer(
         opt=config['optimizer'],
-        steps_per_epoch=math.ceil(81313/config['batch_size']),
+        steps_per_epoch=math.ceil(800_000/config['batch_size']),
         lr_max=config['learning_rate']['max'],
         lr_min=config['learning_rate']['min'],
         warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -55,10 +55,11 @@ with strategy.scope():
     )
 
     dist_model = DistributedModel(
+        backbone=config['backbone'],
         input_size=config['input_size'],
         n_classes=config['n_classes'],
-        pretrained_weights='imagenet',
-        finetuned_weights=None,
+        pretrained_weights=config['pretrained_weights'],
+        finetuned_weights='../output/weights/model.h5',
         dense_units=config['dense_units'],
         dropout_rate=config['dropout_rate'],
         regularization_factor=config['regularization_factor'],
@@ -69,4 +70,5 @@ with strategy.scope():
         strategy=strategy,
         mixed_precision=True)
 
-    dist_model.train(epochs=config['n_epochs'], ds=dataset)
+    dist_model.train(
+        epochs=config['n_epochs'], ds=dataset, save_path=config['save_path'])

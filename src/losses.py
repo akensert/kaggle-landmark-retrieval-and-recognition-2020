@@ -1,7 +1,6 @@
 import tensorflow as tf
 
 
-
 def angular_distance(features):
     features = tf.math.l2_normalize(features, axis=1)
     angular_distances = 1 - tf.matmul(features, features, transpose_b=True)

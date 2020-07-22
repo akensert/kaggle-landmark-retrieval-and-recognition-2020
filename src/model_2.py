@@ -56,7 +56,8 @@ def create_model(backbone,
         weights=pretrained_weights)
 
     pooling = GlobalGeMPooling2D(name='head/gem_pooling')
-    batch_norm = tf.keras.layers.experimental.SyncBatchNormalization(
+    # batch_norm1 = tf.keras.layers.experimental.SyncBatchNormalization()
+    batch_norm2 = tf.keras.layers.experimental.SyncBatchNormalization(
         name='head/sync_batch_norm')
     dropout = tf.keras.layers.Dropout(dropout_rate, name='head/dropout')
     dense = tf.keras.layers.Dense(
@@ -84,10 +85,11 @@ def create_model(backbone,
     label = tf.keras.layers.Input((), name='input/label')
 
     x = backbone(image)
+    # x = batch_norm1(x)
     x = pooling(x)
     x = dropout(x)
     x = dense(x)
-    x = batch_norm(x)
+    x = batch_norm2(x)
     x = margin([x, label])
 
     return tf.keras.Model(

@@ -124,21 +124,44 @@ def _pixel_transform(image,
 
     return image
 
-def preprocess_input(image, target_size, pad, augment):
+def _random_crop(image):
+    shape = tf.shape(image)
+    h, w = tf.gather(shape, 0), tf.gather(shape, 1)
+    # h = 800, w = 400
+    if h > w:
+        diff = h - w
+        # diff = 400
+        shift = tf.random.uniform((), minval=0, maxval=diff, dtype=tf.int32)
+    elif h < w:
+        diff = w - h
+        shift = tf.random.uniform((), minval=0, maxval=diff, dtype=tf.int32)
+
+    else:
+        return image
+
+@tf.function
+def preprocess_input(image, target_size, pad):
     '''
     also for serving
     '''
+    shape = tf.shape(image)
+    h, w = tf.gather(shape, 0), tf.gather(shape, 1)
+    crop = tf.math.minimum(h, w)
+    image = tf.image.random_crop(image, (crop, crop, 3))
+    image = _spatial_transform(image)
+    image = _pixel_transform(image)
+
+    dim = tf.cast(tf.gather(tf.shape(image), 0), tf.float32)
+
+    if (dim * 0.9) > tf.cast(target_size[0], tf.float32):
+        image = tf.image.central_crop(image, 0.9)
     if pad:
         image = tf.image.resize_with_pad(
             image, *target_size, method='bilinear')
     else:
         image = tf.image.resize(
             image, target_size, method='bilinear')
-    image = tf.cast(image, dtype='uint8')
-    if augment:
-        image = _spatial_transform(image)
-        image = _pixel_transform(image)
-    image = tf.cast(image, dtype='float32')
+
     image /= 255.
     return image
 
@@ -197,7 +220,7 @@ def create_triplet_dataset(input_path,
                 .map(lambda x, y: (read_image(x), y),
                     tf.data.experimental.AUTOTUNE)
                 .map(lambda x, y: (preprocess_input(
-                        x, input_size[:2], pad_on_resize, True), y),
+                        x, input_size[:2], pad_on_resize), y),
                      tf.data.experimental.AUTOTUNE)
                 .batch(K))
 
@@ -205,7 +228,8 @@ def create_triplet_dataset(input_path,
     image_paths, labels = prepare_data(dataframe)
 
     dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels))
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    if shuffle_buffer_size > 0:
+        dataset = dataset.shuffle(shuffle_buffer_size)
     dataset = dataset.map(
         lambda x, y: sample_input(x, y, K), tf.data.experimental.AUTOTUNE)
     dataset = dataset.flat_map(nested)
@@ -234,7 +258,7 @@ def create_singlet_dataset(input_path,
         return data.path, data.labels, data.probs
 
     def filter_by_prob(x, y, p):
-        if tf.random.uniform((), 0, 1) > p:
+        if tf.random.uniform((), 0, 1.1) > p:
             return True
         else:
             return False
@@ -247,12 +271,13 @@ def create_singlet_dataset(input_path,
     image_paths, labels, probs = prepare_data(dataframe)
 
     dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels, probs))
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    if shuffle_buffer_size > 0:
+        dataset = dataset.shuffle(shuffle_buffer_size)
     dataset = dataset.filter(filter_by_prob)
     dataset = dataset.map(
         lambda x, y, p: (read_image(x), y), tf.data.experimental.AUTOTUNE)
     dataset = dataset.map(
-        lambda x, y: (preprocess_input(x, input_size[:2], pad_on_resize, True), y),
+        lambda x, y: (preprocess_input(x, input_size[:2], pad_on_resize), y),
         tf.data.experimental.AUTOTUNE)
     dataset = dataset.batch(batch_size)
     return dataset
