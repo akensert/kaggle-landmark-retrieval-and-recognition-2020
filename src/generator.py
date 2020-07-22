@@ -49,35 +49,19 @@ def _spatial_transform(image,
                        hzoom=8.0,
                        wzoom=8.0,
                        hshift=8.0,
-                       wshift=8.0,
-                       p=0.5):
+                       wshift=8.0):
 
 
     dim = tf.gather(tf.shape(image), 0)
     xdim = dim % 2
 
     # random rotation, shear, zoom and shift
-    if tf.random.uniform((), 0, 1) > p:
-        rotation = rotation * tf.random.normal([1], dtype='float32')
-    else:
-        rotation = tf.constant([0.0])
-
-    if tf.random.uniform((), 0, 1) > p:
-        shear = shear * tf.random.normal([1], dtype='float32')
-    else:
-        shear = tf.constant([0.0])
-
-    if tf.random.uniform((), 0, 1) > p:
-        hzoom = 1.0 + tf.random.normal([1], dtype='float32') / hzoom
-        wzoom = 1.0 + tf.random.normal([1], dtype='float32') / wzoom
-    else:
-        hzoom, wzoom = tf.constant([1.0]), tf.constant([1.0])
-
-    if tf.random.uniform((), 0, 1) > p:
-        hshift = hshift * tf.random.normal([1], dtype='float32')
-        wshift = wshift * tf.random.normal([1], dtype='float32')
-    else:
-        hshift, wshift = tf.constant([0.0]), tf.constant([0.0])
+    rotation = rotation * tf.random.normal([1], dtype='float32')
+    shear = shear * tf.random.normal([1], dtype='float32')
+    hzoom = 1.0 + tf.random.normal([1], dtype='float32') / hzoom
+    wzoom = 1.0 + tf.random.normal([1], dtype='float32') / wzoom
+    hshift = hshift * tf.random.normal([1], dtype='float32')
+    wshift = wshift * tf.random.normal([1], dtype='float32')
 
     m = _get_transform_matrix(
         rotation, shear, hzoom, wzoom, hshift, wshift)
@@ -98,7 +82,6 @@ def _spatial_transform(image,
     d    = tf.gather_nd(image, tf.transpose(idx3))
 
     image = tf.reshape(d, [dim, dim, 3])
-
     return image
 
 def _pixel_transform(image,
@@ -106,7 +89,6 @@ def _pixel_transform(image,
                      saturation_delta=0.0,
                      contrast_delta=0.1,
                      brightness_delta=0.2):
-
     if hue_delta > 0:
         image = tf.image.random_hue(
             image, hue_delta)
@@ -119,49 +101,19 @@ def _pixel_transform(image,
     if brightness_delta > 0:
         image = tf.image.random_brightness(
             image, brightness_delta)
-
-    shape = image.shape
-
     return image
 
-def _random_crop(image):
-    shape = tf.shape(image)
-    h, w = tf.gather(shape, 0), tf.gather(shape, 1)
-    # h = 800, w = 400
-    if h > w:
-        diff = h - w
-        # diff = 400
-        shift = tf.random.uniform((), minval=0, maxval=diff, dtype=tf.int32)
-    elif h < w:
-        diff = w - h
-        shift = tf.random.uniform((), minval=0, maxval=diff, dtype=tf.int32)
-
-    else:
-        return image
-
-@tf.function
-def preprocess_input(image, target_size, pad):
+def preprocess_input(image, target_size, augment):
     '''
     also for serving
     '''
-    shape = tf.shape(image)
-    h, w = tf.gather(shape, 0), tf.gather(shape, 1)
-    crop = tf.math.minimum(h, w)
-    image = tf.image.random_crop(image, (crop, crop, 3))
-    image = _spatial_transform(image)
-    image = _pixel_transform(image)
-
-    dim = tf.cast(tf.gather(tf.shape(image), 0), tf.float32)
-
-    if (dim * 0.9) > tf.cast(target_size[0], tf.float32):
-        image = tf.image.central_crop(image, 0.9)
-    if pad:
-        image = tf.image.resize_with_pad(
-            image, *target_size, method='bilinear')
-    else:
-        image = tf.image.resize(
-            image, target_size, method='bilinear')
-
+    image = tf.image.resize(
+        image, target_size, method='bilinear')
+    image = tf.cast(image, tf.uint8)
+    if augment:
+        image = _spatial_transform(image)
+        image = _pixel_transform(image)
+    image = tf.cast(image, tf.float32)
     image /= 255.
     return image
 
@@ -177,7 +129,6 @@ def read_data(input_path):
 def create_triplet_dataset(input_path,
                            batch_size,
                            input_size,
-                           pad_on_resize,
                            K,
                            shuffle_buffer_size=1):
 
@@ -220,7 +171,7 @@ def create_triplet_dataset(input_path,
                 .map(lambda x, y: (read_image(x), y),
                     tf.data.experimental.AUTOTUNE)
                 .map(lambda x, y: (preprocess_input(
-                        x, input_size[:2], pad_on_resize), y),
+                        x, input_size[:2], True), y),
                      tf.data.experimental.AUTOTUNE)
                 .batch(K))
 
@@ -241,7 +192,6 @@ def create_triplet_dataset(input_path,
 def create_singlet_dataset(input_path,
                            batch_size,
                            input_size,
-                           pad_on_resize,
                            K,
                            shuffle_buffer_size=1):
 
@@ -277,7 +227,7 @@ def create_singlet_dataset(input_path,
     dataset = dataset.map(
         lambda x, y, p: (read_image(x), y), tf.data.experimental.AUTOTUNE)
     dataset = dataset.map(
-        lambda x, y: (preprocess_input(x, input_size[:2], pad_on_resize), y),
+        lambda x, y: (preprocess_input(x, input_size[:2], True), y),
         tf.data.experimental.AUTOTUNE)
     dataset = dataset.batch(batch_size)
     return dataset

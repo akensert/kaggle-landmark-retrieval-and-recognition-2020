@@ -1,18 +1,17 @@
 import tensorflow as tf
 import numpy as np
-
-from model import create_model
-from generator import preprocess_input
-from config import (
-    config_1, config_2, config_3, config_4, config_5, config_6
-)
-
 from zipfile import ZipFile
 import shutil
 import os
 import argparse
 import sys
 sys.path.append('../')
+
+from model import create_model
+from generator import preprocess_input
+from config import (
+    config_1, config_2, config_3, config_4, config_5, config_6
+)
 
 tf.config.set_visible_devices([], 'GPU')
 
@@ -59,22 +58,25 @@ class Serving:
             name='input_image')
     ])
     def _extract_global_descriptor(self, input_image):
-        input_images = tf.zeros([0, 384, 384, 3])
+
+        inputs = []
         for config in self.configs:
-            for _ in range(self.tta):
+            input_images = []
+            for scale in config['tt_scaling']:
+                h = int(config['input_size'][0]*scale)
+                w = int(config['input_size'][1]*scale)
                 input_image = preprocess_input(
-                    input_image, config['input_size'][:2], config['pad_on_resize'])
-                input_images = tf.concat([input_images, input_image[tf.newaxis]], axis=0)
+                    input_image, target_size=(h, w), augment=False)
+                input_images.append(input_image[tf.newaxis])
+            inputs.append(input_images)
 
-        input_images = tf.split(input_images, len(self.configs), axis=0)
-
-        outputs = self.model(input_images)
-        if tf.is_tensor(outputs):
-            features = tf.reduce_mean(outputs, axis=0)
-        else:
-            features = tf.concat([
-                tf.reduce_mean(output, axis=0)
-                for output in outputs], axis=0)
+        features = tf.zeros([512*len(self.configs),], dtype='float32')
+        for i in range(5):
+            outputs = self.model([inp[i] for inp in inputs])
+            if tf.is_tensor(outputs):
+                features += outputs[0]
+            else:
+                features += tf.concat([out[0] for out in outputs], axis=0)
         return {
             'global_descriptor': tf.identity(features, name='global_descriptor')
         }
@@ -162,7 +164,7 @@ class Serving:
 # tf.saved_model.save(model, '../tmp/model', {'serving_default': serving})
 
 if __name__ == '__main__':
-    serving = Serving(configs=[config_1,], tta=10)
+    serving = Serving(configs=[config_1,], tta=1)
     serving.save()
     serving.zip()
 

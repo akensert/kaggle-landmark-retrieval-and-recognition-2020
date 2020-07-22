@@ -38,7 +38,6 @@ dataset = create_singlet_dataset(
     input_path=config['input_path'],
     batch_size=config['batch_size'],
     input_size=config['input_size'],
-    pad_on_resize=config['pad_on_resize'],
     K=config['K'],
     shuffle_buffer_size=100000)
 
@@ -46,7 +45,7 @@ with strategy.scope():
 
     optimizer = get_optimizer(
         opt=config['optimizer'],
-        steps_per_epoch=math.ceil(800_000/config['batch_size']),
+        steps_per_epoch=math.ceil(250_000/config['batch_size']),
         lr_max=config['learning_rate']['max'],
         lr_min=config['learning_rate']['min'],
         warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -59,7 +58,7 @@ with strategy.scope():
         input_size=config['input_size'],
         n_classes=config['n_classes'],
         pretrained_weights=config['pretrained_weights'],
-        finetuned_weights='../output/weights/model-efficientnet-b0-1.h5',
+        finetuned_weights=None,
         dense_units=config['dense_units'],
         dropout_rate=config['dropout_rate'],
         regularization_factor=config['regularization_factor'],

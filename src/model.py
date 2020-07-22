@@ -55,7 +55,7 @@ def create_model(backbone,
         input_shape=input_shape,
         weights=pretrained_weights)
 
-    pooling = GlobalGeMPooling2D(name='head/gem_pooling')
+    pooling = GlobalGeMPooling2D(name='head/gem_pooling', dtype='float32')
     batch_norm = tf.keras.layers.experimental.SyncBatchNormalization(
         name='head/sync_batch_norm')
     dropout = tf.keras.layers.Dropout(dropout_rate, name='head/dropout')
@@ -80,6 +80,8 @@ def create_model(backbone,
             name='head/cos_margin',
             dtype='float32')
 
+    softmax = tf.keras.layers.Softmax(dtype='float32')
+
     image = tf.keras.layers.Input(input_shape, name='input/image')
     label = tf.keras.layers.Input((), name='input/label')
 
@@ -89,7 +91,7 @@ def create_model(backbone,
     x = dense(x)
     x = batch_norm(x)
     x = margin([x, label])
-
+    x = softmax(x)
     return tf.keras.Model(
         inputs=[image, label], outputs=x)
 
@@ -143,7 +145,7 @@ class DistributedModel:
 
     def _compute_loss(self, labels, logits):
         per_example_loss = tf.keras.losses.sparse_categorical_crossentropy(
-            labels, logits, from_logits=True, axis=-1
+            labels, logits, from_logits=False, axis=-1
         )
         return tf.reduce_mean(per_example_loss) / self.strategy.num_replicas_in_sync
 
