@@ -27,7 +27,6 @@ class Serving:
         self.export_dir = export_dir
 
     def _create_model_ensemble(self):
-        # create model and load finetuned weights
         models = []
         for i, config in enumerate(self.configs):
             model = create_model(
@@ -49,7 +48,6 @@ class Serving:
             for layer in model.layers:
                 layer._name = layer.name + '_' + str(i)
             models.append(model)
-
         return tf.keras.Model(
             inputs=[m.input for m in models],
             outputs=[m.output for m in models])

@@ -59,7 +59,7 @@ with strategy.scope():
         input_size=config['input_size'],
         n_classes=config['n_classes'],
         pretrained_weights=config['pretrained_weights'],
-        finetuned_weights='../output/weights/model.h5',
+        finetuned_weights='../output/weights/model-efficientnet-b0-1.h5',
         dense_units=config['dense_units'],
         dropout_rate=config['dropout_rate'],
         regularization_factor=config['regularization_factor'],

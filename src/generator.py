@@ -245,20 +245,20 @@ def create_singlet_dataset(input_path,
                            K,
                            shuffle_buffer_size=1):
 
-
     def prepare_data(data):
+        alpha = 0.75
         counts_map = dict(
             data.groupby('landmark_id')['path'].agg(lambda x: len(x)))
         data['counts'] = data['landmark_id'].map(counts_map)
         data['probs'] = (
-            np.log(data.counts) / np.log(data.counts).max()).astype(np.float32)
+            (1/data.counts**alpha) / (1/data.counts**alpha).max())
         uniques = data['landmark_id'].unique()
         uniques_map = dict(zip(uniques, range(len(uniques))))
         data['labels'] = data['landmark_id'].map(uniques_map)
-        return data.path, data.labels, data.probs
+        return data.path, data.labels, data.probs.astype(np.float32)
 
     def filter_by_prob(x, y, p):
-        if tf.random.uniform((), 0, 1.1) > p:
+        if tf.random.uniform((), 0, 1) <= p:
             return True
         else:
             return False
