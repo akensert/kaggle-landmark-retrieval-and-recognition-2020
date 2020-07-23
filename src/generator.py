@@ -126,7 +126,7 @@ def read_data(input_path):
     data['path'] = data['id'].map(mapping)
     return data
 
-def create_triplet_dataset(input_path,
+def create_triplet_dataset(dataframe,
                            batch_size,
                            input_size,
                            K,
@@ -175,7 +175,6 @@ def create_triplet_dataset(input_path,
                      tf.data.experimental.AUTOTUNE)
                 .batch(K))
 
-    dataframe = read_data(input_path)
     image_paths, labels = prepare_data(dataframe)
 
     dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels))
@@ -189,11 +188,11 @@ def create_triplet_dataset(input_path,
         lambda x, y: reshape(x, y), tf.data.experimental.AUTOTUNE)
     return dataset
 
-def create_singlet_dataset(input_path,
+def create_singlet_dataset(dataframe,
+                           training,
                            batch_size,
                            input_size,
-                           K,
-                           shuffle_buffer_size=1):
+                           K):
 
     def prepare_data(data):
         alpha = 0.75
@@ -217,13 +216,12 @@ def create_singlet_dataset(input_path,
         image = tf.io.read_file(image_path)
         return tf.image.decode_jpeg(image, channels=3)
 
-    dataframe = read_data(input_path)
     image_paths, labels, probs = prepare_data(dataframe)
 
     dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels, probs))
-    if shuffle_buffer_size > 0:
-        dataset = dataset.shuffle(shuffle_buffer_size)
-    dataset = dataset.filter(filter_by_prob)
+    if training:
+        dataset = dataset.shuffle(100_000)
+        dataset = dataset.filter(filter_by_prob)
     dataset = dataset.map(
         lambda x, y, p: (read_image(x), y), tf.data.experimental.AUTOTUNE)
     dataset = dataset.map(

@@ -6,8 +6,8 @@ config_1 = {
     'save_path': '../output/weights/model-resnet-50-1.h5',
     'optimizer': 'sgd',              # 'sgd' (momentum=0.9) or 'adam'
     'learning_rate': {
-        'max': 1e-3,
-        'min': 1e-4,
+        'max': 2e-3,
+        'min': 2e-4,
         'warmup_epochs': 1,
         'decay_epochs': 100,
         'power': 1
@@ -21,7 +21,7 @@ config_1 = {
     'n_epochs': 100,
     'batch_size': 48,
     'input_size': (256, 256, 3),
-    'tt_scaling': [0.5, 0.75, 1.00, 1.25, 1.5],
+    'tt_scaling': [0.75, 1.00, 1.25],
     'n_classes': 81313,
     'dense_units': 512,
     'dropout_rate': 0.0,

@@ -71,12 +71,13 @@ class Serving:
             inputs.append(input_images)
 
         features = tf.zeros([512*len(self.configs),], dtype='float32')
-        for i in range(5):
+        for i in range(3):
             outputs = self.model([inp[i] for inp in inputs])
             if tf.is_tensor(outputs):
                 features += outputs[0]
             else:
                 features += tf.concat([out[0] for out in outputs], axis=0)
+        
         return {
             'global_descriptor': tf.identity(features, name='global_descriptor')
         }
@@ -95,8 +96,8 @@ class Serving:
 
         with ZipFile(self.export_dir + 'model.zip', 'w') as zip:
             for fp in filepaths:
-                print(fp, '/'.join(fp.split('/')[2:]))
-                zip.write(fp, arcname='/'.join(fp.split('/')[2:]))
+                print(fp, '/'.join(fp.split('/')[4:]))
+                zip.write(fp, arcname='/'.join(fp.split('/')[4:]))
 
 # @tf.function(input_signature=[
 #     tf.TensorSpec(

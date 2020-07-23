@@ -1,6 +1,8 @@
 import tensorflow as tf
 import os
 import tqdm
+import pandas as pd
+import numpy as np
 
 from models.efficientnet_sync import (
     EfficientNetB0, EfficientNetB1, EfficientNetB2, EfficientNetB3,
@@ -143,9 +145,9 @@ class DistributedModel:
         if not(os.path.isdir('../output/weights')) and save_best:
             os.makedirs('../output/weights')
 
-    def _compute_loss(self, labels, logits):
+    def _compute_loss(self, labels, probs):
         per_example_loss = tf.keras.losses.sparse_categorical_crossentropy(
-            labels, logits, from_logits=False, axis=-1
+            labels, probs, from_logits=False, axis=-1
         )
         return tf.reduce_mean(per_example_loss) / self.strategy.num_replicas_in_sync
 
@@ -154,8 +156,8 @@ class DistributedModel:
 
         def train_step(inputs):
             with tf.GradientTape() as tape:
-                logits = self.model(inputs, training=True)
-                loss = self._compute_loss(inputs[1], logits)
+                probs = self.model(inputs, training=True)
+                loss = self._compute_loss(inputs[1], probs)
                 self.loss_metric.update_state(loss)
                 if self.mixed_precision:
                     scaled_loss = self.optimizer.get_scaled_loss(loss)
@@ -174,6 +176,32 @@ class DistributedModel:
         return self.strategy.reduce(
             tf.distribute.ReduceOp.SUM, per_replica_loss, axis=None)
 
+    @tf.function
+    def _distributed_predict_step(self, dist_inputs):
+
+        def predict_step(inputs):
+            probs = self.model(inputs, training=False)
+            return probs
+
+        preds = self.strategy.run(predict_step, args=(dist_inputs,))
+        if tf.is_tensor(preds):
+            return [preds]
+        else:
+            return preds.values
+
+    def predict(self, ds):
+
+        ds = self.strategy.experimental_distribute_dataset(ds)
+        ds = tqdm.tqdm(ds)
+
+        preds_accum = np.zeros([0, 81313], dtype=np.float32)
+        for inputs in ds:
+            preds = self._distributed_predict_step(inputs)
+            for pred in preds:
+                preds_accum = np.concatenate([preds_accum, pred.numpy()], axis=0)
+
+        return preds_accum
+
     def train(self, epochs, ds, save_path):
         for epoch in range(epochs):
             dataset = self.strategy.experimental_distribute_dataset(ds)
@@ -187,4 +215,5 @@ class DistributedModel:
                     )
                 )
             self.loss_metric.reset_states()
-            self.model.save_weights(save_path)
+            if save_path:
+                self.model.save_weights(save_path)

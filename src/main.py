@@ -3,7 +3,7 @@ import tensorflow as tf
 import math
 
 from model import create_model, DistributedModel
-from generator import create_triplet_dataset, create_singlet_dataset
+from generator import read_data, create_triplet_dataset, create_singlet_dataset
 from optimizer import get_optimizer
 from config import config_1 as config
 
@@ -34,12 +34,14 @@ else:
     print("Setting strategy to MirroredStrategy()")
 
 
+dataframe = read_data(config['input_path'])
+
 dataset = create_singlet_dataset(
-    input_path=config['input_path'],
+    dataframe=dataframe,
+    training=True,
     batch_size=config['batch_size'],
     input_size=config['input_size'],
-    K=config['K'],
-    shuffle_buffer_size=100000)
+    K=config['K'])
 
 with strategy.scope():
 
