@@ -8,6 +8,7 @@ import random
 
 pd.options.mode.chained_assignment = None
 
+
 def _get_transform_matrix(rotation, shear, hzoom, wzoom, hshift, wshift):
 
     def get_3x3_mat(lst):
@@ -45,7 +46,6 @@ def _get_transform_matrix(rotation, shear, hzoom, wzoom, hshift, wshift):
         tf.matmul(zoom_mat, shift_mat)
     )
 
-@tf.function
 def _spatial_transform(image,
                        rotation=3.0,
                        shear=2.0,
@@ -88,7 +88,6 @@ def _spatial_transform(image,
 
     # apply destinations pixels to image
     idx3 = tf.stack([ydim//2-idx2[0,], xdim//2-1+idx2[1,]])
-    tf.print(idx3)
     d = tf.gather_nd(image, tf.transpose(idx3))
     image = tf.reshape(d, [ydim, xdim, 3])
     return image
@@ -111,7 +110,6 @@ def _pixel_transform(image,
         image = tf.image.random_brightness(
             image, brightness_delta)
     return image
-
 
 def preprocess_input(image, target_size, ratio=-1, augment=False):
     '''
@@ -144,73 +142,8 @@ def preprocess_input(image, target_size, ratio=-1, augment=False):
     image /= 255.
     return image
 
-
-def create_triplet_dataset(dataframe,
-                           batch_size,
-                           input_size,
-                           K,
-                           shuffle_buffer_size=1):
-
-
-    def prepare_data(data):
-        data = (
-            data
-            .groupby('landmark_id')['path']
-            .agg(lambda x: ','.join(x)) # 'path1,path2,path3,path4,...'
-            #.apply(list) # ['path1', 'path2', 'path3', 'path4', ...]
-            .reset_index()
-        )
-        return data.path, data.index
-
-    def sample_input(image_paths, label, K):
-        image_paths = tf.strings.split(image_paths, sep=',')
-        labels = tf.tile([label], [K,])
-        if K-len(image_paths) > 0:
-            image_paths = tf.random.shuffle(image_paths)
-            for i in tf.range(K-len(image_paths)):
-                image_paths = tf.concat(
-                    [image_paths, [tf.gather(image_paths, i)]], axis=0)
-            return image_paths, labels
-        idx = tf.argsort(tf.random.uniform(tf.shape(image_paths)))
-        idx = tf.gather(idx, tf.range(K))
-        image_paths = tf.gather(image_paths, idx)
-        return image_paths, labels
-
-    def read_image(image_path):
-        image = tf.io.read_file(image_path)
-        return tf.image.decode_jpeg(image, channels=3)
-
-    def reshape(x, y):
-        x = tf.reshape(x, (-1, *input_size))
-        y = tf.reshape(y, (-1,))
-        return x, y
-
-    def nested(x, y):
-        return (tf.data.Dataset.from_tensor_slices((x, y))
-                .map(lambda x, y: (read_image(x), y),
-                    tf.data.experimental.AUTOTUNE)
-                .map(lambda x, y: (preprocess_input(
-                        x, input_size[:2], True), y),
-                     tf.data.experimental.AUTOTUNE)
-                .batch(K))
-
-    image_paths, labels = prepare_data(dataframe)
-
-    dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels))
-    if shuffle_buffer_size > 0:
-        dataset = dataset.shuffle(shuffle_buffer_size)
-    dataset = dataset.map(
-        lambda x, y: sample_input(x, y, K), tf.data.experimental.AUTOTUNE)
-    dataset = dataset.flat_map(nested)
-    dataset = dataset.batch(batch_size)
-    dataset = dataset.map(
-        lambda x, y: reshape(x, y), tf.data.experimental.AUTOTUNE)
-    return dataset
-
-
-def _prepare_df(df):
-    df = df[df.landmark_id != 138982]
-    alpha = 0.75
+def _prepare_df(df_orig, alpha=0.75):
+    df = df_orig.copy()
     counts_map = dict(
         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
     df['counts'] = df['landmark_id'].map(counts_map)
@@ -222,13 +155,14 @@ def _prepare_df(df):
     df['image_target_ratio'] = df['image_target_ratio'].astype(np.float32)
     return df
 
-def _group_shuffle_df(df_orig, batch_size, undersample_by_prob=False):
+def _group_shuffle_df(df_orig, batch_size, undersample=False):
 
     df = df_orig.copy()
 
-    if undersample_by_prob:
-        df = df.sample(frac=0.25, replace=False, weights='probs', axis=0)
+    if undersample:
+        df = df.sample(frac=undersample, replace=False, weights='probs', axis=0)
     else:
+        df = df[df.landmark_id != 138982]
         df = df.sample(frac=1)
 
     groups_idx = [
@@ -262,18 +196,20 @@ def _group_shuffle_df(df_orig, batch_size, undersample_by_prob=False):
     df = pd.concat(groups_no_remainder)
     return df
 
-def create_dataset(df, training, batch_size, input_size, K=None):
+def create_dataset(dataframe, training, batch_size, input_size, K=None):
 
     def read_image(image_path):
         image = tf.io.read_file(image_path)
         return tf.image.decode_jpeg(image, channels=3)
 
-    df = _prepare_df(df)
+    df = _prepare_df(dataframe, alpha=0.75)
 
     if training:
-        df = _group_shuffle_df(df, batch_size, undersample_by_prob=False)
+        df = _group_shuffle_df(df, batch_size, undersample=False)
 
-    image_paths, labels ratio = df.path, df.labels, df.image_target_ratio
+    print(df)
+
+    image_paths, labels, ratio = df.path, df.labels, df.image_target_ratio
 
     dataset = tf.data.Dataset.from_tensor_slices((image_paths, labels, ratio))
     dataset = dataset.map(

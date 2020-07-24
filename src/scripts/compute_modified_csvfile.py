@@ -50,7 +50,7 @@ def modify_dataframe(input_path):
             )
         )
     )
-    df.to_csv('../../input/modified_train_2.csv', index=False)
+    df.to_csv('../../input/modified_train.csv', index=False)
 
 
 if __name__ == '__main__':

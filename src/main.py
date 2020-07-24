@@ -44,13 +44,6 @@ else:
 
 dataframe = pd.read_csv('../input/modified_train.csv')
 
-# dataset = create_singlet_dataset(
-#     dataframe=dataframe,
-#     training=True,
-#     batch_size=config['batch_size'],
-#     input_size=config['input_size'],
-#     K=config['K'])
-
 with strategy.scope():
 
     optimizer = get_optimizer(

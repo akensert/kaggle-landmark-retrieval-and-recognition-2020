@@ -205,7 +205,7 @@ class DistributedModel:
     def train(self, epochs, batch_size, input_size, ds, save_path):
         for epoch in range(epochs):
             dataset = create_dataset(
-                    df=ds,
+                    dataframe=ds,
                     training=True,
                     batch_size=batch_size,
                     input_size=input_size,
