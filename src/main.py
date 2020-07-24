@@ -1,11 +1,19 @@
 import numpy as np
 import tensorflow as tf
 import math
+import pandas as pd
 
 from model import create_model, DistributedModel
-from generator import read_data, create_triplet_dataset, create_singlet_dataset
+from generator import create_dataset, create_triplet_dataset, create_singlet_dataset
 from optimizer import get_optimizer
 from config import config_1 as config
+
+import logging
+tf.get_logger().setLevel(logging.ERROR)
+import warnings
+warnings.filterwarnings("ignore")
+
+
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 num_gpus = len(gpus)
@@ -34,14 +42,14 @@ else:
     print("Setting strategy to MirroredStrategy()")
 
 
-dataframe = read_data(config['input_path'])
+dataframe = pd.read_csv('../input/modified_train.csv')
 
-dataset = create_singlet_dataset(
-    dataframe=dataframe,
-    training=True,
-    batch_size=config['batch_size'],
-    input_size=config['input_size'],
-    K=config['K'])
+# dataset = create_singlet_dataset(
+#     dataframe=dataframe,
+#     training=True,
+#     batch_size=config['batch_size'],
+#     input_size=config['input_size'],
+#     K=config['K'])
 
 with strategy.scope():
 
@@ -72,4 +80,5 @@ with strategy.scope():
         mixed_precision=True)
 
     dist_model.train(
-        epochs=config['n_epochs'], ds=dataset, save_path=config['save_path'])
+        epochs=config['n_epochs'], batch_size=config['batch_size'],
+        input_size=config['input_size'], ds=dataframe, save_path=config['save_path'])

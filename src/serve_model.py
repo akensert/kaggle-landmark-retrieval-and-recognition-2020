@@ -66,18 +66,18 @@ class Serving:
                 h = int(config['input_size'][0]*scale)
                 w = int(config['input_size'][1]*scale)
                 input_image = preprocess_input(
-                    input_image, target_size=(h, w), augment=False)
+                    input_image, target_size=(h, w))
                 input_images.append(input_image[tf.newaxis])
             inputs.append(input_images)
 
         features = tf.zeros([512*len(self.configs),], dtype='float32')
-        for i in range(3):
+        for i in range(1):
             outputs = self.model([inp[i] for inp in inputs])
             if tf.is_tensor(outputs):
-                features += outputs[0]
+                features += tf.math.l2_normalize(outputs[0])
             else:
                 features += tf.concat([out[0] for out in outputs], axis=0)
-        
+
         return {
             'global_descriptor': tf.identity(features, name='global_descriptor')
         }
@@ -99,107 +99,8 @@ class Serving:
                 print(fp, '/'.join(fp.split('/')[4:]))
                 zip.write(fp, arcname='/'.join(fp.split('/')[4:]))
 
-# @tf.function(input_signature=[
-#     tf.TensorSpec(
-#         shape=[None, None, 3],
-#         dtype=tf.uint8,
-#         name='input_image')
-# ])
-# def serving(input_image):
-#
-#     dim = 0
-#     for config in CONFIGS:
-#         dim += config['dense_units']
-#
-#     features = tf.zeros((dim,), dtype=tf.float32)
-#     augmented_images = []
-#     for k in range(8):
-#         input_images = [
-#             preprocess_input(input_image, config['input_size'][:2], config['pad_on_resize'])
-#             for config in CONFIGS
-#         ]
-#         input_images = [
-#             tf.expand_dims(input_image, 0, name=f'image_{i}/expand_dims')
-#             for i, input_image in enumerate(input_images)
-#         ]
-#         outputs = model(input_images)
-#         if tf.is_tensor(outputs):
-#             features += tf.math.l2_normalize(outputs[0])
-#         else:
-#             features += tf.concat([
-#                 tf.math.l2_normalize(output[0]) for output in outputs], axis=0)
-#     return {
-#         'global_descriptor': tf.identity(features, name='global_descriptor')
-#     }
-#
-# def create_model_ensemble():
-#     # create model and load finetuned weights
-#     models = []
-#     for config in CONFIGS:
-#         model = create_model(
-#             backbone=config['backbone'],
-#             input_shape=config['input_size'],
-#             n_classes=config['n_classes'],
-#             pretrained_weights=config['pretrained_weights'],
-#             dense_units=config['dense_units'],
-#             dropout_rate=config['dropout_rate'],
-#             regularization_factor=config['regularization_factor'],
-#             loss=config['loss']['type'],
-#             scale=config['loss']['scale'],
-#             margin=config['loss']['margin'],
-#         )
-#         model.load_weights(config['save_path'])
-#         models.append(model)
-#     # remove margin layer from each model, and finally merge models
-#     for i in range(len(models)):
-#         models[i] = tf.keras.Model(
-#             inputs=models[i].get_layer('input/image').input,
-#             outputs=models[i].get_layer('head/dense').output)
-#         for layer in models[i].layers:
-#             layer._name = layer.name + f'_{i}'
-#     return tf.keras.Model(
-#         inputs=[m.input for m in models],
-#         outputs=[m.output for m in models])
-#
-# model = create_model_ensemble()
-# tf.saved_model.save(model, '../tmp/model', {'serving_default': serving})
 
 if __name__ == '__main__':
     serving = Serving(configs=[config_1,], tta=1)
     serving.save()
     serving.zip()
-
-# TESTING --------------------------------------------
-# image = tf.io.read_file(
-#     '../input/landmark-retrieval-2020/train/0/0/0/000a0aee5e90cbaf.jpg')
-# image = tf.image.decode_jpeg(image, channels=3)
-# model_loaded = tf.saved_model.load('../tmp/model')
-# f = model_loaded.signatures["serving_default"]
-# test1 = f(input_image=image)['global_descriptor']
-#
-# image = preprocess_input(
-#     image, config['input_size'][:2], config['pad_on_resize'], augment=False)
-# out = model([image[tf.newaxis,...], image[tf.newaxis,...]])
-# out1 = tf.math.l2_normalize(out[0][0])
-# out2 = tf.math.l2_normalize(out[1][0])
-# test2 = tf.concat([out1, out2], axis=0)
-# print('served model output =  ', test1.numpy()[:10])
-# print('regular model output = ', test2.numpy()[:10])
-# #assert (all(test1['global_descriptor'].numpy().astype(np.float32)
-# #        == test2.numpy().astype(np.float32)))
-# #print("Model successfully loaded!")
-# -----------------------------------------------------
-
-# OUTPUT ----------------------------------------------
-# filepaths = []
-# for dirpath, _, filepath in os.walk('../tmp/model'):
-#     for fp in filepath:
-#         filepaths.append(os.path.join(dirpath, fp))
-#
-# with ZipFile('../output/served_models/my_model.zip', 'w') as zip:
-#     for fp in filepaths:
-#         print(fp, '/'.join(fp.split('/')[2:]))
-#         zip.write(fp, arcname='/'.join(fp.split('/')[2:]))
-
-#shutil.rmtree('../tmp/model')
-# ----------------------------------------------------

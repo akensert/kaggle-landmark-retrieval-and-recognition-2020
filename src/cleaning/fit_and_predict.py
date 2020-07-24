@@ -2,11 +2,12 @@ import numpy as np
 import tensorflow as tf
 import math
 from sklearn import model_selection
+import pandas as pd
 import sys
 sys.path.append('../')
 
 from model import create_model, DistributedModel
-from generator import create_triplet_dataset, create_singlet_dataset
+from generator import read_data, create_triplet_dataset, create_singlet_dataset
 from optimizer import get_optimizer
 from config import config_1 as config
 
@@ -63,7 +64,7 @@ with strategy.scope():
 
         optimizer = get_optimizer(
             opt=config['optimizer'],
-            steps_per_epoch=math.ceil(250_000/config['batch_size']),
+            steps_per_epoch=math.ceil(125_000/config['batch_size']),
             lr_max=config['learning_rate']['max'],
             lr_min=config['learning_rate']['min'],
             warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -76,7 +77,7 @@ with strategy.scope():
             input_size=config['input_size'],
             n_classes=config['n_classes'],
             pretrained_weights=config['pretrained_weights'],
-            finetuned_weights=None,
+            finetuned_weights='../'+config['save_path'],
             dense_units=config['dense_units'],
             dropout_rate=config['dropout_rate'],
             regularization_factor=config['regularization_factor'],
@@ -88,8 +89,8 @@ with strategy.scope():
             mixed_precision=True)
 
         dist_model.train(
-            epochs=1, ds=train_dataset, save_path=None)
+           epochs=16, ds=train_dataset, save_path="../"+config['save_path'])
 
         preds = dist_model.predict(ds=valid_dataset)
-        pd.DataFrame(preds, index=valid_idx).to_csv(
+        pd.DataFrame(preds.astype(int), index=valid_idx).to_csv(
             f'../../output/predictions/preds_{i}.csv')

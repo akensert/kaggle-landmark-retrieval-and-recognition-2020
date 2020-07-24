@@ -19,7 +19,7 @@ from models.xception_sync import (
     Xception)
 
 from layers import GlobalGeMPooling2D, ArcMarginProduct, AddMarginProduct
-
+from generator import create_dataset
 
 BACKBONE_ZOO = {
     'efficientnet-b0':    EfficientNetB0,
@@ -142,9 +142,6 @@ class DistributedModel:
                 tf.keras.mixed_precision.experimental.LossScaleOptimizer(
                     optimizer, loss_scale='dynamic')
 
-        if not(os.path.isdir('../output/weights')) and save_best:
-            os.makedirs('../output/weights')
-
     def _compute_loss(self, labels, probs):
         per_example_loss = tf.keras.losses.sparse_categorical_crossentropy(
             labels, probs, from_logits=False, axis=-1
@@ -191,20 +188,30 @@ class DistributedModel:
 
     def predict(self, ds):
 
-        ds = self.strategy.experimental_distribute_dataset(ds)
-        ds = tqdm.tqdm(ds)
+        dataset = self.strategy.experimental_distribute_dataset(ds)
+        dataset = tqdm.tqdm(dataset)
 
-        preds_accum = np.zeros([0, 81313], dtype=np.float32)
-        for inputs in ds:
+        preds_accum = np.zeros([0, 1000], dtype=np.float32)
+        for inputs in dataset:
             preds = self._distributed_predict_step(inputs)
             for pred in preds:
-                preds_accum = np.concatenate([preds_accum, pred.numpy()], axis=0)
+                pred_argsort = tf.argsort(pred, direction='DESCENDING')
+                pred_argsort = pred_argsort.numpy()
+                pred_argsort = pred_argsort[:, :1000]
+                preds_accum = np.concatenate([preds_accum, pred_argsort], axis=0)
 
         return preds_accum
 
-    def train(self, epochs, ds, save_path):
+    def train(self, epochs, batch_size, input_size, ds, save_path):
         for epoch in range(epochs):
-            dataset = self.strategy.experimental_distribute_dataset(ds)
+            dataset = create_dataset(
+                    df=ds,
+                    training=True,
+                    batch_size=batch_size,
+                    input_size=input_size,
+                    K=1
+                )
+            dataset = self.strategy.experimental_distribute_dataset(dataset)
             dataset = tqdm.tqdm(dataset)
             for i, inputs in enumerate(dataset):
                 loss = self._distributed_train_step(inputs)
