@@ -54,8 +54,8 @@ with strategy.scope():
 
     for i, (train_idx, test_idx) in enumerate(sss):
 
-        train_dataset = dataframe.iloc[train_idx[::100]]
-        test_dataset = dataframe.iloc[test_idx[::1000]]
+        train_dataset = dataframe.iloc[train_idx]
+        test_dataset = dataframe.iloc[test_idx]
 
         optimizer = get_optimizer(
             opt=config['optimizer'],
@@ -91,5 +91,5 @@ with strategy.scope():
 
         output = dist_model._test(test_df=test_dataset)
 
-        pd.DataFrame(output, columns=['target', 'max', 'min'], index=test_idx[::1000]).to_csv(
+        pd.DataFrame(output, columns=['target', 'max', 'min'], index=test_idx).to_csv(
             f'../../output/predictions/preds_{i}.csv')

@@ -169,14 +169,14 @@ def _group_shuffle_df(df_orig, batch_size, undersample=False):
 
     groups_idx = [
         df.index[np.where(df.image_target_ratio_group == i)[0]]
-        for i in range(6)
+        for i in range(7)
     ]
     N = [
         math.ceil(groups_idx[i].shape[0] / batch_size)
-        for i in range(6)
+        for i in range(7)
     ]
     groups = [
-        np.array_split(groups_idx[i], N[i]) for i in range(6)
+        np.array_split(groups_idx[i], N[i]) for i in range(7)
     ]
 
     groups_flattened = [i for j in groups for i in j]
@@ -204,8 +204,7 @@ def create_dataset(dataframe, training, batch_size, input_size, K=None):
         return tf.image.decode_jpeg(image, channels=3)
 
     df = _prepare_df(dataframe, alpha=0.5)
-    if batch_size > 1:
-        df = _group_shuffle_df(df, batch_size, undersample=training)
+    df = _group_shuffle_df(df, batch_size, undersample=training)
 
     image_paths, labels, ratio = df.path, df.labels, df.image_target_ratio
 
