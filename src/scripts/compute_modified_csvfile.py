@@ -24,7 +24,7 @@ def modify_dataframe(input_path):
     files_paths = glob.glob(input_path + 'train/*/*/*/*')
     mapping = {}
     for path in files_paths:
-        mapping[path.split('/')[-1].split('.')[0]] = path
+        mapping[path.split('/')[-1].split('.')[0]] = path[3:]
     df = pd.read_csv(input_path + 'train.csv')
     df['path'] = df['id'].map(mapping)
 

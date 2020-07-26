@@ -136,7 +136,7 @@ def preprocess_input(image, target_size, ratio=-1, augment=False):
 
     image = tf.cast(image, tf.uint8)
     if augment:
-        image = _spatial_transform(image)
+        #image = _spatial_transform(image)
         image = _pixel_transform(image)
     image = tf.cast(image, tf.float32)
     image /= 255.
@@ -152,6 +152,7 @@ def _prepare_df(df_orig, alpha=0.75):
     uniques = df['landmark_id'].unique()
     uniques_map = dict(zip(uniques, range(len(uniques))))
     df['labels'] = df['landmark_id'].map(uniques_map)
+    df['labels'] = df['labels'].astype(np.int32)
     df['image_target_ratio'] = df['image_target_ratio'].astype(np.float32)
     return df
 
@@ -160,9 +161,10 @@ def _group_shuffle_df(df_orig, batch_size, undersample=False):
     df = df_orig.copy()
 
     if undersample:
-        df = df.sample(frac=undersample, replace=False, weights='probs', axis=0)
+        #df = df[df.landmark_id != 138982]
+        df = df.sample(frac=0.5, replace=False, weights='probs', axis=0)
     else:
-        df = df[df.landmark_id != 138982]
+        #df = df[df.landmark_id != 138982]
         df = df.sample(frac=1)
 
     groups_idx = [
@@ -184,7 +186,6 @@ def _group_shuffle_df(df_orig, batch_size, undersample=False):
             mapping[j] = i
 
     df['batch'] = df.index.map(mapping)
-    df['batch'] = df['batch'].astype(np.int32)
     df = df.sort_values(by='batch')
 
     groups = [df for _, df in df.groupby('batch')]
@@ -202,12 +203,9 @@ def create_dataset(dataframe, training, batch_size, input_size, K=None):
         image = tf.io.read_file(image_path)
         return tf.image.decode_jpeg(image, channels=3)
 
-    df = _prepare_df(dataframe, alpha=0.75)
-
-    if training:
-        df = _group_shuffle_df(df, batch_size, undersample=False)
-
-    print(df)
+    df = _prepare_df(dataframe, alpha=0.5)
+    if batch_size > 1:
+        df = _group_shuffle_df(df, batch_size, undersample=training)
 
     image_paths, labels, ratio = df.path, df.labels, df.image_target_ratio
 
@@ -216,7 +214,7 @@ def create_dataset(dataframe, training, batch_size, input_size, K=None):
         lambda x, y, r: (read_image(x), y, r),
         tf.data.experimental.AUTOTUNE)
     dataset = dataset.map(
-        lambda x, y, r: (preprocess_input(x, input_size[:2], r, True), y),
+        lambda x, y, r: (preprocess_input(x, input_size[:2], r, training), y),
         tf.data.experimental.AUTOTUNE)
     dataset = dataset.batch(batch_size)
     return dataset

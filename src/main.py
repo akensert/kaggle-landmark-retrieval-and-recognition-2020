@@ -2,9 +2,10 @@ import numpy as np
 import tensorflow as tf
 import math
 import pandas as pd
+from sklearn import model_selection
 
 from model import create_model, DistributedModel
-from generator import create_dataset, create_triplet_dataset, create_singlet_dataset
+from generator import create_dataset
 from optimizer import get_optimizer
 from config import config_1 as config
 
@@ -44,11 +45,17 @@ else:
 
 dataframe = pd.read_csv('../input/modified_train.csv')
 
+sss = model_selection.StratifiedShuffleSplit(
+    n_splits=1, test_size=0.1, random_state=42
+).split(X=dataframe.index, y=dataframe.landmark_id)
+
+train_idx, valid_idx = next(sss)
+
 with strategy.scope():
 
     optimizer = get_optimizer(
         opt=config['optimizer'],
-        steps_per_epoch=math.ceil(250_000/config['batch_size']),
+        steps_per_epoch=math.ceil(500_000/config['batch_size']),
         lr_max=config['learning_rate']['max'],
         lr_min=config['learning_rate']['min'],
         warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -60,6 +67,7 @@ with strategy.scope():
         backbone=config['backbone'],
         input_size=config['input_size'],
         n_classes=config['n_classes'],
+        batch_size=config['batch_size'],
         pretrained_weights=config['pretrained_weights'],
         finetuned_weights=None,
         dense_units=config['dense_units'],
@@ -72,6 +80,7 @@ with strategy.scope():
         strategy=strategy,
         mixed_precision=True)
 
-    dist_model.train(
-        epochs=config['n_epochs'], batch_size=config['batch_size'],
-        input_size=config['input_size'], ds=dataframe, save_path=config['save_path'])
+    dist_model.train_and_eval(
+        train_df=dataframe.iloc[train_idx], valid_df=dataframe.iloc[valid_idx],
+        epochs=config['n_epochs'],
+        save_path=config['save_path'])

@@ -104,6 +104,7 @@ class DistributedModel:
                  backbone,
                  input_size,
                  n_classes,
+                 batch_size,
                  pretrained_weights,
                  finetuned_weights,
                  dense_units,
@@ -114,7 +115,8 @@ class DistributedModel:
                  margin,
                  optimizer,
                  strategy,
-                 mixed_precision):
+                 mixed_precision,
+                 clip_grad=10.):
 
         self.model = create_model(
             backbone=backbone,
@@ -128,14 +130,31 @@ class DistributedModel:
             scale=scale,
             margin=margin,)
 
+        self.input_size = input_size
+        self.batch_size = batch_size
+        self.global_batch_size = batch_size * strategy.num_replicas_in_sync
+
         if finetuned_weights:
             self.model.load_weights(finetuned_weights)
 
         self.mixed_precision = mixed_precision
         self.optimizer = optimizer
         self.strategy = strategy
+        self.clip_grad = clip_grad
 
-        self.loss_metric = tf.keras.metrics.Mean()
+        # loss function
+        self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
+            from_logits=False, reduction=tf.keras.losses.Reduction.NONE)
+
+        # metrics
+        self.mean_loss_train = tf.keras.metrics.SparseCategoricalCrossentropy(
+            from_logits=False)
+        self.mean_accuracy_train = tf.keras.metrics.SparseTopKCategoricalAccuracy(
+            k=5)
+        self.mean_loss_valid = tf.keras.metrics.SparseCategoricalCrossentropy(
+            from_logits=False)
+        self.mean_accuracy_valid = tf.keras.metrics.SparseTopKCategoricalAccuracy(
+            k=5)
 
         if self.optimizer and self.mixed_precision:
             self.optimizer = \
@@ -143,84 +162,116 @@ class DistributedModel:
                     optimizer, loss_scale='dynamic')
 
     def _compute_loss(self, labels, probs):
-        per_example_loss = tf.keras.losses.sparse_categorical_crossentropy(
-            labels, probs, from_logits=False, axis=-1
-        )
-        return tf.reduce_mean(per_example_loss) / self.strategy.num_replicas_in_sync
+        per_example_loss = self.loss_object(labels, probs)
+        return tf.nn.compute_average_loss(
+            per_example_loss, global_batch_size=self.global_batch_size)
+
+    def _backprop_loss(self, tape, loss, weights):
+        gradients = tape.gradient(loss, weights)
+        if self.mixed_precision:
+            gradients = self.optimizer.get_unscaled_gradients(gradients)
+        clipped, _ = tf.clip_by_global_norm(gradients, clip_norm=self.clip_grad)
+        self.optimizer.apply_gradients(zip(clipped, weights))
+
+    def _train_step(self, inputs):
+        with tf.GradientTape() as tape:
+            probs = self.model(inputs, training=True)
+            loss = self._compute_loss(inputs[1], probs)
+            if self.mixed_precision:
+                loss = self.optimizer.get_scaled_loss(loss)
+        self._backprop_loss(tape, loss, self.model.trainable_weights)
+        self.mean_loss_train.update_state(inputs[1], probs)
+        self.mean_accuracy_train.update_state(inputs[1], probs)
+
+    def _predict_step(self, inputs):
+        probs = self.model(inputs, training=False)
+        self.mean_loss_valid.update_state(inputs[1], probs)
+        self.mean_accuracy_valid.update_state(inputs[1], probs)
+        return probs
 
     @tf.function
     def _distributed_train_step(self, dist_inputs):
-
-        def train_step(inputs):
-            with tf.GradientTape() as tape:
-                probs = self.model(inputs, training=True)
-                loss = self._compute_loss(inputs[1], probs)
-                self.loss_metric.update_state(loss)
-                if self.mixed_precision:
-                    scaled_loss = self.optimizer.get_scaled_loss(loss)
-            if self.mixed_precision:
-                scaled_gradients = tape.gradient(
-                    scaled_loss, self.model.trainable_variables)
-                gradients = self.optimizer.get_unscaled_gradients(scaled_gradients)
-            else:
-                gradients = tape.gradient(loss, self.model.trainable_variables)
-
-            self.optimizer.apply_gradients(
-                zip(gradients, self.model.trainable_variables))
-            return loss
-
-        per_replica_loss = self.strategy.run(train_step, args=(dist_inputs,))
+        per_replica_loss = self.strategy.run(self._train_step, args=(dist_inputs,))
         return self.strategy.reduce(
             tf.distribute.ReduceOp.SUM, per_replica_loss, axis=None)
 
     @tf.function
     def _distributed_predict_step(self, dist_inputs):
+        probs = self.strategy.run(self._predict_step, args=(dist_inputs,))
+        if tf.is_tensor(probs): return [probs]
+        else: return probs.values
 
-        def predict_step(inputs):
-            probs = self.model(inputs, training=False)
-            return probs
-
-        preds = self.strategy.run(predict_step, args=(dist_inputs,))
-        if tf.is_tensor(preds):
-            return [preds]
-        else:
-            return preds.values
-
-    def predict(self, ds):
-
-        dataset = self.strategy.experimental_distribute_dataset(ds)
-        dataset = tqdm.tqdm(dataset)
-
-        preds_accum = np.zeros([0, 1000], dtype=np.float32)
-        for inputs in dataset:
-            preds = self._distributed_predict_step(inputs)
-            for pred in preds:
-                pred_argsort = tf.argsort(pred, direction='DESCENDING')
-                pred_argsort = pred_argsort.numpy()
-                pred_argsort = pred_argsort[:, :1000]
-                preds_accum = np.concatenate([preds_accum, pred_argsort], axis=0)
-
-        return preds_accum
-
-    def train(self, epochs, batch_size, input_size, ds, save_path):
+    def train_and_eval(self, train_df, valid_df, epochs, save_path):
         for epoch in range(epochs):
-            dataset = create_dataset(
-                    dataframe=ds,
+            train_ds = create_dataset(
+                    dataframe=train_df,
                     training=True,
-                    batch_size=batch_size,
-                    input_size=input_size,
+                    batch_size=self.batch_size,
+                    input_size=self.input_size,
                     K=1
                 )
-            dataset = self.strategy.experimental_distribute_dataset(dataset)
-            dataset = tqdm.tqdm(dataset)
-            for i, inputs in enumerate(dataset):
+            train_ds = self.strategy.experimental_distribute_dataset(train_ds)
+            train_ds = tqdm.tqdm(train_ds)
+            for i, inputs in enumerate(train_ds):
                 loss = self._distributed_train_step(inputs)
-                epoch_loss = self.loss_metric.result().numpy()
-                dataset.set_description(
-                    "Loss {:.4f}".format(
-                        self.loss_metric.result().numpy(),
+                train_ds.set_description(
+                    "TRAIN: Loss {:.3f}, Accuracy {:.3f}".format(
+                        self.mean_loss_train.result().numpy(),
+                        self.mean_accuracy_train.result().numpy()
                     )
                 )
-            self.loss_metric.reset_states()
+
+            if valid_df is not None:
+                valid_ds = create_dataset(
+                        dataframe=valid_df,
+                        training=False,
+                        batch_size=4,
+                        input_size=self.input_size,
+                        K=1
+                    )
+                valid_ds = self.strategy.experimental_distribute_dataset(valid_ds)
+                valid_ds = tqdm.tqdm(valid_ds)
+                for inputs in valid_ds:
+                    probs = self._distributed_predict_step(inputs)
+                    valid_ds.set_description(
+                        "VALID: Loss {:.3f}, Accuracy {:.3f}".format(
+                            self.mean_loss_valid.result().numpy(),
+                            self.mean_accuracy_valid.result().numpy()
+                        )
+                    )
+
             if save_path:
                 self.model.save_weights(save_path)
+
+            self.mean_loss_train.reset_states()
+            self.mean_loss_valid.reset_states()
+            self.mean_accuracy_train.reset_states()
+            self.mean_accuracy_valid.reset_states()
+
+    def _test(self, test_df):
+        '''
+        this method is only to be used with cleaning/fit_and_predict.py
+        '''
+        test_ds = create_dataset(
+                dataframe=test_df,
+                training=False,
+                batch_size=1,
+                input_size=self.input_size,
+                K=1
+            )
+        test_ds = self.strategy.experimental_distribute_dataset(test_ds)
+        test_ds = tqdm.tqdm(test_ds)
+
+        out = np.zeros([0, 3], dtype=np.float32)
+        for inputs in test_ds:
+            probs = self._distributed_predict_step(inputs)
+            for prob in probs:
+                prob = tf.squeeze(prob)
+                prob_target = tf.gather(prob, tf.squeeze(inputs[1])).numpy()
+                prob_max = tf.reduce_max(prob).numpy()
+                prob_min = tf.reduce_min(prob).numpy()
+                out = np.concatenate(
+                    [out, np.array([[prob_target, prob_max, prob_min]])],
+                    axis=0
+                )
+        return out

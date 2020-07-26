@@ -7,9 +7,14 @@ import sys
 sys.path.append('../')
 
 from model import create_model, DistributedModel
-from generator import read_data, create_triplet_dataset, create_singlet_dataset
 from optimizer import get_optimizer
 from config import config_1 as config
+
+import logging
+tf.get_logger().setLevel(logging.ERROR)
+import warnings
+warnings.filterwarnings("ignore")
+
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 num_gpus = len(gpus)
@@ -38,7 +43,8 @@ else:
     print("Setting strategy to MirroredStrategy()")
 
 
-dataframe = read_data('../' + config['input_path'])
+dataframe = pd.read_csv('../../input/modified_train.csv')
+dataframe['path'] = dataframe['path'].apply(lambda x: '../' + x)
 
 sss = model_selection.StratifiedKFold(
     n_splits=2, shuffle=True, random_state=42
@@ -46,25 +52,14 @@ sss = model_selection.StratifiedKFold(
 
 with strategy.scope():
 
-    for i, (train_idx, valid_idx) in enumerate(sss):
+    for i, (train_idx, test_idx) in enumerate(sss):
 
-        train_dataset = create_singlet_dataset(
-            dataframe=dataframe.iloc[train_idx],
-            training=True,
-            batch_size=config['batch_size'],
-            input_size=config['input_size'],
-            K=config['K'])
-
-        valid_dataset = create_singlet_dataset(
-            dataframe=dataframe.iloc[valid_idx],
-            training=False,
-            batch_size=config['batch_size'],
-            input_size=config['input_size'],
-            K=config['K'])
+        train_dataset = dataframe.iloc[train_idx[::100]]
+        test_dataset = dataframe.iloc[test_idx[::1000]]
 
         optimizer = get_optimizer(
             opt=config['optimizer'],
-            steps_per_epoch=math.ceil(125_000/config['batch_size']),
+            steps_per_epoch=math.ceil(500_000/config['batch_size']),
             lr_max=config['learning_rate']['max'],
             lr_min=config['learning_rate']['min'],
             warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -76,8 +71,9 @@ with strategy.scope():
             backbone=config['backbone'],
             input_size=config['input_size'],
             n_classes=config['n_classes'],
+            batch_size=config['batch_size'],
             pretrained_weights=config['pretrained_weights'],
-            finetuned_weights='../'+config['save_path'],
+            finetuned_weights=None,
             dense_units=config['dense_units'],
             dropout_rate=config['dropout_rate'],
             regularization_factor=config['regularization_factor'],
@@ -88,9 +84,12 @@ with strategy.scope():
             strategy=strategy,
             mixed_precision=True)
 
-        dist_model.train(
-           epochs=16, ds=train_dataset, save_path="../"+config['save_path'])
+        dist_model.train_and_eval(
+            train_df=train_dataset, valid_df=None,
+            epochs=8,
+            save_path='../'+config['save_path'])
 
-        preds = dist_model.predict(ds=valid_dataset)
-        pd.DataFrame(preds.astype(int), index=valid_idx).to_csv(
+        output = dist_model._test(test_df=test_dataset)
+
+        pd.DataFrame(output, columns=['target', 'max', 'min'], index=test_idx[::1000]).to_csv(
             f'../../output/predictions/preds_{i}.csv')
