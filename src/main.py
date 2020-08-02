@@ -15,7 +15,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-
 gpus = tf.config.experimental.list_physical_devices('GPU')
 num_gpus = len(gpus)
 if gpus:
@@ -42,20 +41,22 @@ else:
     strategy = tf.distribute.MirroredStrategy()
     print("Setting strategy to MirroredStrategy()")
 
+def prepare_dataframe(df_orig, alpha=0.5):
+    df = df_orig.copy()
+    repl_map = dict(df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
+    df['weight'] = 1 / df['landmark_id'].map(repl_map).astype(np.float32)**alpha
+    df['label'] = df['label'].astype(np.int32)
+    df['image_target_ratio'] = df['image_target_ratio'].astype(np.float32)
+    return df
 
 dataframe = pd.read_csv('../input/modified_train.csv')
-
-sss = model_selection.StratifiedShuffleSplit(
-    n_splits=1, test_size=0.1, random_state=42
-).split(X=dataframe.index, y=dataframe.landmark_id)
-
-train_idx, valid_idx = next(sss)
+dataframe = prepare_dataframe(dataframe, alpha=0.5)
 
 with strategy.scope():
 
     optimizer = get_optimizer(
         opt=config['optimizer'],
-        steps_per_epoch=math.ceil(500_000/config['batch_size']),
+        steps_per_epoch=math.ceil(400_000/config['batch_size']),
         lr_max=config['learning_rate']['max'],
         lr_min=config['learning_rate']['min'],
         warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -76,11 +77,12 @@ with strategy.scope():
         loss=config['loss']['type'],
         scale=config['loss']['scale'],
         margin=config['loss']['margin'],
+        clip_grad=config['clip_grad'],
         optimizer=optimizer,
         strategy=strategy,
         mixed_precision=True)
 
-    dist_model.train_and_eval(
-        train_df=dataframe.iloc[train_idx], valid_df=dataframe.iloc[valid_idx],
+    dist_model.train(
+        train_df=dataframe,
         epochs=config['n_epochs'],
         save_path=config['save_path'])

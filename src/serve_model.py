@@ -72,7 +72,7 @@ class Serving:
 
         features = tf.zeros([512*len(self.configs),], dtype='float32')
         for i in range(1):
-            outputs = self.model([inp[i] for inp in inputs])
+            outputs = self.model([inp[i] for inp in inputs], training=False)
             if tf.is_tensor(outputs):
                 features += tf.math.l2_normalize(outputs[0])
             else:

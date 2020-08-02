@@ -17,7 +17,7 @@ def obtain_image_shape(image_path):
 
 def modify_dataframe(input_path):
     '''
-    This function only uses a single thread. It takes approximately 30-60
+    This function only uses a single thread. It takes approximately 30-90
     minutes to run this function. Because this modification of the csv file is
     only made once, a multi-thread version hasn't been implemented.
     '''
@@ -31,7 +31,7 @@ def modify_dataframe(input_path):
     image_shape = []
     image_ratio = []
     for i, row in tqdm.tqdm(df.iterrows()):
-        shape = obtain_image_shape(row.path)
+        shape = obtain_image_shape('../'+row.path)
         image_shape.append(shape)
         image_ratio.append(shape[0]/shape[1])
 
@@ -50,7 +50,15 @@ def modify_dataframe(input_path):
             )
         )
     )
-    df.to_csv('../../input/modified_train.csv', index=False)
+
+    uniques = df['landmark_id'].unique()
+    mapping = dict(zip(uniques, range(len(uniques))))
+    df['label'] = df['landmark_id'].map(mapping)
+
+    df.to_csv(
+        '/'.join(input_path.split('/')[:-2])+'/'+modified_train.csv',
+        index=False
+    )
 
 
 if __name__ == '__main__':
