@@ -11,6 +11,7 @@
 *.zip
 output/served_models/*
 !output/served_models/.keep
+_notebooks/
 
 # jupyter
 MANIFEST

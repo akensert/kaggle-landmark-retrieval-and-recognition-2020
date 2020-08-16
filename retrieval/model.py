@@ -42,100 +42,86 @@ CNN_ARCHITECTURES = {
     'xception':           Xception,
 }
 
-def create_model(backbone,
-                 input_shape,
-                 n_classes,
-                 pretrained_weights=None,
-                 dense_units=512,
-                 dropout_rate=0.0,
-                 regularization_factor=None,
-                 loss='arcface',
-                 scale=30,
-                 margin=0.3):
+def create_model(backbone, input_size, n_classes, gem_p,
+                 dense_units, dropout_rate, loss, scale, margin):
 
     backbone = CNN_ARCHITECTURES[backbone](
         include_top=False,
-        input_shape=input_shape,
-        weights=pretrained_weights)
+        input_shape=[input_size, input_size, 3],
+        weights='imagenet')
 
-    #pooling = GlobalGeMPooling2D(initial_p=3., name='head/gem_pooling', dtype='float32')
-    pooling = tf.keras.layers.GlobalAveragePooling2D(name='head/pooling')
-    dropout = tf.keras.layers.Dropout(dropout_rate, name='head/dropout')
-    dense = tf.keras.layers.Dense(units=dense_units, name='head/dense')
+    pooling = GlobalGeMPooling2D(gem_p, name='head/gem', dtype='float32')
 
-    if loss == "arcface":
+    dropout = tf.keras.layers.Dropout(
+        dropout_rate, name='head/dropout')
+
+    dense = tf.keras.layers.Dense(
+        units=dense_units, name='head/dense')
+
+    if loss == 'softmax':
+        dense_output = tf.keras.layers.Dense(
+            units=n_classes, name='head/vanilla')
+    elif loss == 'arcface':
         margin = ArcMarginProduct(
-            n_classes=n_classes,
-            s=scale,
-            m=margin,
-            name='head/arc_margin',
-            dtype='float32')
+            n_classes=n_classes, s=scale, m=margin,
+            name='head/arc_margin', dtype='float32')
     else:
-        # cosface
         margin = AddMarginProduct(
-            n_classes=n_classes,
-            s=scale,
-            m=margin,
-            name='head/cos_margin',
-            dtype='float32')
+            n_classes=n_classes, s=scale, m=margin,
+            name='head/cos_margin', dtype='float32')
 
     softmax = tf.keras.layers.Softmax(dtype='float32')
 
-    image = tf.keras.layers.Input(input_shape, name='input/image')
+    image = tf.keras.layers.Input(
+        [input_size, input_size, 3], name='input/image')
     label = tf.keras.layers.Input((), name='input/label')
 
     x = backbone(image)
     x = pooling(x)
     x = dropout(x)
     x = dense(x)
-    x = margin([x, label])
+
+    if loss == 'softmax':
+        x = dense_output(tf.nn.relu(x))
+    else:
+        x = margin([x, label])
+
     x = softmax(x)
+
     return tf.keras.Model(
         inputs=[image, label], outputs=x)
 
 
 class DistributedModel:
 
-    def __init__(self,
-                 backbone,
-                 input_size,
-                 n_classes,
-                 batch_size,
-                 pretrained_weights,
-                 finetuned_weights,
-                 dense_units,
-                 dropout_rate,
-                 regularization_factor,
-                 loss,
-                 scale,
-                 margin,
-                 clip_grad,
-                 optimizer,
-                 strategy,
-                 mixed_precision):
+    def __init__(self, backbone, input_size, n_classes, phases,
+                 batch_size, dense_units, dropout_rate, gem_p, loss,
+                 scale, margin, clip_grad, checkpoint_weights,
+                 optimizer, strategy, mixed_precision):
 
         self.model = create_model(
             backbone=backbone,
-            input_shape=input_size,
+            input_size=None,
             n_classes=n_classes,
-            pretrained_weights=pretrained_weights,
+            gem_p=gem_p,
             dense_units=dense_units,
             dropout_rate=dropout_rate,
-            regularization_factor=regularization_factor,
             loss=loss,
             scale=scale,
             margin=margin,)
 
-        self.input_size = input_size
-        self.batch_size = batch_size
+        self.input_sizes = input_size
+        self.batch_sizes = batch_size
+        self.phases = phases
 
-        if finetuned_weights:
-            self.model.load_weights(finetuned_weights)
+        if checkpoint_weights:
+            self.model.load_weights(checkpoint_weights + '.h5')
 
-        self.mixed_precision = mixed_precision
+        self.clip_grad = clip_grad
+
         self.optimizer = optimizer
         self.strategy = strategy
-        self.clip_grad = clip_grad
+        self.mixed_precision = mixed_precision
 
         # loss function
         self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
@@ -144,7 +130,7 @@ class DistributedModel:
         # metrics
         self.mean_loss_train = tf.keras.metrics.SparseCategoricalCrossentropy(
             from_logits=False)
-        self.mean_accuracy_train = tf.keras.metrics.SparseTopKCategoricalAccuracy(
+        self.mean_accuracy_top5_train = tf.keras.metrics.SparseTopKCategoricalAccuracy(
             k=5)
 
         if self.optimizer and self.mixed_precision:
@@ -175,56 +161,37 @@ class DistributedModel:
                 loss = self.optimizer.get_scaled_loss(loss)
         self._backprop_loss(tape, loss, self.model.trainable_weights)
         self.mean_loss_train.update_state(inputs[1], probs)
-        self.mean_accuracy_train.update_state(inputs[1], probs)
-        return loss, probs
+        self.mean_accuracy_top5_train.update_state(inputs[1], probs)
+        return loss
 
     @tf.function
     def _distributed_train_step(self, dist_inputs):
-        per_replica_loss, per_replica_probs = self.strategy.run(
+        per_replica_loss = self.strategy.run(
             self._train_step, args=(dist_inputs,))
-        return (
-            self.strategy.reduce(
-                tf.distribute.ReduceOp.SUM,
-                per_replica_loss,
-                axis=None),
-            per_replica_probs
+        return self.strategy.reduce(
+            tf.distribute.ReduceOp.SUM,
+            per_replica_loss,
+            axis=None
         )
 
-    def _extract_per_replica_values(self, epoch, inputs, probs):
-        per_replica_inputs = self.strategy.experimental_local_results(inputs)
-        per_replica_probs = self.strategy.experimental_local_results(probs)
-        # loop over replicates
-        for inpts, probs in zip(per_replica_inputs, per_replica_probs):
-            # loop over examples
-            for prob, label, ID in zip(probs, inpts[1], inpts[-1]):
-                conf = tf.gather(prob, label) + self.min_confidence
-                ID = ID.numpy().decode('utf-8')
-                self.confidences[ID] = tf.clip_by_value(
-                    conf, 0.0, 1.0).numpy()
-
-    def train(self, train_df, epochs, save_path):
-
-        compute_confidence_from_epoch = 0
-        self.min_confidence = 0.9
-
-        # define accumulator(s)
-        self.confidences = {}
+    def train(self, train_df, epochs, sample_frac, save_path):
 
         for epoch in range(epochs):
 
-            if epoch >= compute_confidence_from_epoch:
-                train_df['weight'] = (
-                    np.where(train_df['id'].isin(self.confidences.keys()),
-                             train_df['weight']*train_df['id'].map(self.confidences),
-                             train_df['weight'])
-                )
-                self.min_confidence = max(self.min_confidence-0.1, 0.1)
-                print('MINIMUM CONFIDENCE', self.min_confidence)
-                print(train_df.head(10))
+            phase = 0
+            for p in self.phases:
+                if epoch >= p:
+                    phase += 1
+
+            self.batch_size = self.batch_sizes[phase]
+            self.input_size = self.input_sizes[phase]
+
+            print(f"Phase {phase}, input_size={self.input_size}, batch_size={self.batch_size}")
 
             train_ds = create_dataset(
                     dataframe=train_df,
                     training=True,
+                    sample_frac=sample_frac,
                     batch_size=self.batch_size,
                     input_size=self.input_size,
                 )
@@ -232,19 +199,17 @@ class DistributedModel:
             train_ds = self.strategy.experimental_distribute_dataset(train_ds)
             train_ds = tqdm.tqdm(train_ds)
             for i, inputs in enumerate(train_ds):
-                loss, probs = self._distributed_train_step(inputs)
+                loss = self._distributed_train_step(inputs)
                 train_ds.set_description(
-                    "TRAIN: Loss {:.3f}, Accuracy {:.3f}".format(
+                    "Phase {:01d}, Loss {:.3f}, Acc_5 {:.3f}".format(
+                        phase,
                         self.mean_loss_train.result().numpy(),
-                        self.mean_accuracy_train.result().numpy()
+                        self.mean_accuracy_top5_train.result().numpy(),
                     )
                 )
 
-                if epoch >= compute_confidence_from_epoch:
-                    self._extract_per_replica_values(epoch, inputs, probs)
-
             if save_path:
-                self.model.save_weights(save_path)
+                self.model.save_weights(save_path + '.h5')
 
             self.mean_loss_train.reset_states()
-            self.mean_accuracy_train.reset_states()
+            self.mean_accuracy_top5_train.reset_states()

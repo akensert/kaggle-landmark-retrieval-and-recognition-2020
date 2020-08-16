@@ -17,6 +17,7 @@ warnings.filterwarnings("ignore")
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 num_gpus = len(gpus)
+mixed_precision = False
 if gpus:
     try:
         for gpu in gpus:
@@ -30,6 +31,7 @@ if gpus:
     tf.keras.mixed_precision.experimental.set_policy(policy)
     print('Compute dtype: %s' % policy.compute_dtype)
     print('Variable dtype: %s' % policy.variable_dtype)
+    mixed_precision = True
 
 if num_gpus == 0:
     strategy = tf.distribute.OneDeviceStrategy(device='CPU')
@@ -41,7 +43,8 @@ else:
     strategy = tf.distribute.MirroredStrategy()
     print("Setting strategy to MirroredStrategy()")
 
-def prepare_dataframe(df_orig, alpha=0.5):
+
+def prepare_dataframe(df_orig, alpha=1.0):
     df = df_orig.copy()
     repl_map = dict(df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
     df['weight'] = 1 / df['landmark_id'].map(repl_map).astype(np.float32)**alpha
@@ -50,13 +53,15 @@ def prepare_dataframe(df_orig, alpha=0.5):
     return df
 
 dataframe = pd.read_csv('../input/modified_train.csv')
-dataframe = prepare_dataframe(dataframe, alpha=0.5)
+#dataframe = dataframe.iloc[::150]
+dataframe = prepare_dataframe(dataframe, alpha=config['data_sampling']['alpha'])
+
 
 with strategy.scope():
 
     optimizer = get_optimizer(
         opt=config['optimizer'],
-        steps_per_epoch=math.ceil(400_000/config['batch_size']),
+        steps_per_epoch=config['learning_rate']['steps_per_epoch'],
         lr_max=config['learning_rate']['max'],
         lr_min=config['learning_rate']['min'],
         warmup_epochs=config['learning_rate']['warmup_epochs'],
@@ -68,21 +73,22 @@ with strategy.scope():
         backbone=config['backbone'],
         input_size=config['input_size'],
         n_classes=config['n_classes'],
+        phases=config['phases'],
         batch_size=config['batch_size'],
-        pretrained_weights=config['pretrained_weights'],
-        finetuned_weights=None,
         dense_units=config['dense_units'],
         dropout_rate=config['dropout_rate'],
-        regularization_factor=config['regularization_factor'],
+        gem_p=config['gem_p'],
         loss=config['loss']['type'],
         scale=config['loss']['scale'],
         margin=config['loss']['margin'],
         clip_grad=config['clip_grad'],
+        checkpoint_weights=config['checkpoint_weights'],
         optimizer=optimizer,
         strategy=strategy,
-        mixed_precision=True)
+        mixed_precision=mixed_precision)
 
     dist_model.train(
         train_df=dataframe,
         epochs=config['n_epochs'],
+        sample_frac=config['data_sampling']['frac'],
         save_path=config['save_path'])

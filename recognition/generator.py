@@ -12,7 +12,7 @@ pd.options.mode.chained_assignment = None
 def _get_transform_matrix(rotation, shear, hzoom, wzoom, hshift, wshift):
 
     def get_3x3_mat(lst):
-        return tf.reshape(tf.concat([lst],axis=0), [3,3])
+        return tf.reshape(tf.concat([lst], axis=0), [3,3])
 
     # convert degrees to radians
     rotation = math.pi * rotation / 360.
@@ -63,9 +63,8 @@ def _spatial_transform(image,
     # random rotation, shear, zoom and shift
     rotation = rotation * tf.random.normal([1], dtype='float32')
     shear = shear * tf.random.normal([1], dtype='float32')
-    zoom = 1.0 + tf.random.normal([1], dtype='float32') / hzoom
-    hzoom = zoom
-    wzoom = zoom
+    hzoom = 1.0 + tf.random.normal([1], dtype='float32') / hzoom
+    wzoom = 1.0 + tf.random.normal([1], dtype='float32') / wzoom
     hshift = hshift * tf.random.normal([1], dtype='float32')
     wshift = wshift * tf.random.normal([1], dtype='float32')
 
@@ -115,45 +114,38 @@ def _random_fliplr(image, p=0.25):
     return image
 
 def preprocess_input(image, target_size, ratio=-1, augment=False):
-    '''
-    also for serving
-    '''
+
     if ratio == -1: # ratio = h / w
-        h, w = tf.gather(target_size, 0), tf.gather(target_size, 1)
+        h, w = target_size, target_size
         image = tf.image.resize(
             image, (h, w), method='area', preserve_aspect_ratio=True)
     else:
         if ratio > 1: # h > w
-            h = tf.gather(target_size, 0)
+            h = target_size
             w = int(tf.cast(h, tf.float32) / ratio)
         elif ratio < 1: # w > h
-            w = tf.gather(target_size, 1)
+            w = target_size
             h = int(tf.cast(w, tf.float32) * ratio)
         else: # h == w
-            h = tf.gather(target_size, 0)
-            w = tf.gather(target_size, 1)
+            h, w = target_size, target_size
 
         image = tf.image.resize(image, (h, w), method='area')
 
     image = tf.cast(image, tf.uint8)
+
     if augment:
         image = _spatial_transform(image)
-        # image = _random_fliplr(image)
         image = _pixel_transform(image)
-    image = tf.cast(image, tf.float32)
-    image /= 255.
+
+    image = tf.cast(image, tf.float32) / 255.
     return image
 
-def _group_shuffle_df(df_orig, batch_size, undersample=False):
+def _group_shuffle_df(df_orig, batch_size, sample_frac):
 
     df = df_orig.copy()
 
-    if undersample:
-        df = df.sample(
-            frac=undersample, replace=False, weights='weight', axis=0)
-    else:
-        #df = df[df.landmark_id != 138982]
-        df = df.sample(frac=1)
+    df = df.sample(
+        frac=sample_frac, replace=False, weights='weight', axis=0)
 
     groups_idx = [
         df.index[np.where(df.image_target_ratio_group == i)[0]]
@@ -185,23 +177,24 @@ def _group_shuffle_df(df_orig, batch_size, undersample=False):
             groups_no_remainder.append(group)
     return pd.concat(groups_no_remainder)
 
-def create_dataset(dataframe, training, batch_size, input_size):
+def create_dataset(dataframe, training, sample_frac, batch_size, input_size):
 
     def read_image(image_path):
         image = tf.io.read_file(image_path)
         return tf.image.decode_jpeg(image, channels=3)
 
     df = _group_shuffle_df(
-        dataframe, batch_size, undersample=0.25 if training else False)
+        dataframe, batch_size, sample_frac=sample_frac if training else 1.0)
 
-    paths, labels, ratios, ids = df.path, df.label, df.image_target_ratio, df.id
+    paths, labels, ratios = df.path, df.label, df.image_target_ratio
 
-    dataset = tf.data.Dataset.from_tensor_slices((paths, labels, ratios, ids))
+    dataset = tf.data.Dataset.from_tensor_slices((paths, labels, ratios))
     dataset = dataset.map(
-        lambda x,y,r,i: (read_image(x), y, r, i),
+        lambda x,y,r: (read_image(x), y, r),
         tf.data.experimental.AUTOTUNE)
     dataset = dataset.map(
-        lambda x,y,r,i: (preprocess_input(x, input_size[:2], r, training), y, i),
+        lambda x,y,r: (preprocess_input(x, input_size, r, training), y),
         tf.data.experimental.AUTOTUNE)
     dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     return dataset

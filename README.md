@@ -1,3 +1,3 @@
-## landmark-retrieval-2020 
+## landmark retrieval and recognition (2020)
 
 Work in progress
