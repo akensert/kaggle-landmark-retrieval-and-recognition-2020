@@ -63,4 +63,4 @@ def modify_dataframe(input_path):
 
 if __name__ == '__main__':
 
-    modify_dataframe('../../input/landmark-retrieval-2020/')
+    modify_dataframe('../../input/landmark-recognition-2020/')
