@@ -56,10 +56,9 @@ def modify_dataframe(input_path):
     df['label'] = df['landmark_id'].map(mapping)
 
     df.to_csv(
-        '/'.join(input_path.split('/')[:-2])+'/'+modified_train.csv',
+        '/'.join(input_path.split('/')[:-1])+'/'+'modified_train.csv',
         index=False
     )
-
 
 if __name__ == '__main__':
 
