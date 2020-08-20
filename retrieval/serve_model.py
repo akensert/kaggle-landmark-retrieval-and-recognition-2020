@@ -136,6 +136,6 @@ class Serving:
 
 
 if __name__ == '__main__':
-    serving = Serving(configs=[config_2, ])
+    serving = Serving(configs=[config_1, ])
     serving.save_model()
     serving.zip_model()

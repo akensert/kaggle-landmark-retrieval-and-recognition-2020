@@ -6,195 +6,131 @@ import math
 import tqdm
 import random
 
-pd.options.mode.chained_assignment = None
+import augmentation
 
 
-def _get_transform_matrix(rotation, shear, hzoom, wzoom, hshift, wshift):
+@tf.function
+def load_image(image_path, central_crop=False, crop_ratio=(0.7, 1.0), dim=512):
+    '''
+    This functions takes an image path as input, reads the image, then central
+    crops it or random crops it. Both type of croppings will keep the aspect ratio
+    of the image, but only the random crop will function as a random zoom and
+    a random shift (could be used as image augmentation/jitter). Finally, the
+    cropped image is resized to (dim, dim, 3).
 
-    def get_3x3_mat(lst):
-        return tf.reshape(tf.concat([lst], axis=0), [3,3])
+    Arguments:
+        image_path: path to jpeg image (str)
+        central_crop: if image should be central cropped (bool)
+        crop_ratio: [if central_crop == False] crops the image randomly
+            between 0.7*min_dim and 1.0*min_dim.
+        dim: target size of the image, if dim = 512, final image size
+            will be (512, 512, 3)
+    Returns:
+        image tensor: a cropped and resized image of size (dim, dim, 3)
 
-    # convert degrees to radians
-    rotation = math.pi * rotation / 360.
-    shear    = math.pi * shear    / 360.
+    '''
 
-    one  = tf.constant([1],dtype='float32')
-    zero = tf.constant([0],dtype='float32')
+    def random_truncated_normal_offset(max_offset, min_offset):
+        '''
+        Computes random offset for the cropping of an image, according
+        to a truncated normal distribution.
 
-    c1   = tf.math.cos(rotation)
-    s1   = tf.math.sin(rotation)
-    rot_mat = get_3x3_mat([c1,    s1,   zero ,
-                           -s1,   c1,   zero ,
-                           zero,  zero, one ])
+        Note:
+            stddev=max_offset/4 (of tf.random.normal()) will create
+            sort of a rounded triangular distribution shape, while
+            stddev=max_offset/6 will create more like a normal
+            distribution shape, due to truncation.
+        '''
+        _ = tf.constant(-1, dtype='float32')
+        offset = tf.while_loop(
+            cond=lambda x: x<min_offset or x>max_offset,
+            body=lambda x: tf.random.normal((), max_offset/2, max_offset/4),
+            loop_vars=[_])
+        return tf.cast(offset[0], dtype='int32')
 
-    c2 = tf.math.cos(shear)
-    s2 = tf.math.sin(shear)
-    shear_mat = get_3x3_mat([one,  s2,   zero ,
-                             zero, c2,   zero ,
-                             zero, zero, one ])
+    image = tf.io.read_file(image_path)
+    image = tf.image.decode_jpeg(image, channels=3)
 
-    zoom_mat = get_3x3_mat([one/hzoom, zero,      zero,
-                            zero,      one/wzoom, zero,
-                            zero,      zero,      one])
+    shape = tf.shape(image)[:-1]
 
-    shift_mat = get_3x3_mat([one,  zero, hshift,
-                             zero, one,  wshift,
-                             zero, zero, one   ])
 
-    return tf.matmul(
-        tf.matmul(rot_mat, shear_mat),
-        tf.matmul(zoom_mat, shift_mat)
+    if central_crop:
+        if shape[0] > shape[1]:
+            offset_height = (shape[0]-shape[1])//2
+            offset_width = 0
+            target_height = target_width = shape[1]
+        else:
+            offset_height = 0
+            offset_width = (shape[1]-shape[0])//2
+            target_height = target_width = shape[0]
+
+        image_cropped=tf.image.crop_to_bounding_box(
+            image,
+            offset_height=offset_height,
+            offset_width=offset_width,
+            target_height=target_height,
+            target_width=target_width,
+        )
+        return tf.cast(
+            tf.image.resize(
+                image_cropped, (dim, dim), method='area'),
+            dtype='uint8'
+        )
+
+    min_dim = tf.reduce_min(shape)
+    crop_size = tf.cast(min_dim, 'float32') * tf.random.uniform((), *crop_ratio)
+
+    y_max_offset = tf.cast(shape[0], dtype='float32')-crop_size
+    x_max_offset = tf.cast(shape[1], dtype='float32')-crop_size
+    min_offset = tf.constant(0, dtype='float32')
+
+    offset_height = random_truncated_normal_offset(y_max_offset, min_offset)
+    offset_width = random_truncated_normal_offset(x_max_offset, min_offset)
+    target_height = target_width = tf.cast(crop_size, dtype='int32')
+
+    image_cropped = tf.image.crop_to_bounding_box(
+        image,
+        offset_height=offset_height,
+        offset_width=offset_width,
+        target_height=target_height,
+        target_width=target_width,
     )
+    return tf.cast(
+            tf.image.resize(
+                image_cropped, (dim, dim), method='area'),
+            dtype='uint8'
+        )
 
-def _spatial_transform(image,
-                       rotation=5.0,
-                       shear=2.0,
-                       hzoom=8.0,
-                       wzoom=8.0,
-                       hshift=8.0,
-                       wshift=8.0):
-
-
-    ydim = tf.gather(tf.shape(image), 0)
-    xdim = tf.gather(tf.shape(image), 1)
-    xxdim = xdim % 2
-    yxdim = ydim % 2
-
-    # random rotation, shear, zoom and shift
-    rotation = rotation * tf.random.normal([1], dtype='float32')
-    shear = shear * tf.random.normal([1], dtype='float32')
-    hzoom = 1.0 + tf.random.normal([1], dtype='float32') / hzoom
-    wzoom = 1.0 + tf.random.normal([1], dtype='float32') / wzoom
-    hshift = hshift * tf.random.normal([1], dtype='float32')
-    wshift = wshift * tf.random.normal([1], dtype='float32')
-
-    m = _get_transform_matrix(
-        rotation, shear, hzoom, wzoom, hshift, wshift)
-
-    # origin pixels
-    y = tf.repeat(tf.range(ydim//2, -ydim//2,-1), xdim)
-    x = tf.tile(tf.range(-xdim//2, xdim//2), [ydim])
-    z = tf.ones([ydim*xdim], dtype='int32')
-    idx = tf.stack([y, x, z])
-
-    # destination pixels
-    idx2 = tf.matmul(m, tf.cast(idx, dtype='float32'))
-    idx2 = tf.cast(idx2, dtype='int32')
-    # clip to origin pixels range
-    idx2y = tf.clip_by_value(idx2[0,], -ydim//2+yxdim+1, ydim//2)
-    idx2x = tf.clip_by_value(idx2[1,], -xdim//2+xxdim+1, xdim//2)
-    idx2 = tf.stack([idx2y, idx2x, idx2[2,]])
-
-    # apply destinations pixels to image
-    idx3 = tf.stack([ydim//2-idx2[0,], xdim//2-1+idx2[1,]])
-    d = tf.gather_nd(image, tf.transpose(idx3))
-    image = tf.reshape(d, [ydim, xdim, 3])
-    return image
-
-def _pixel_transform(image,
-                     saturation_delta=0.5,
-                     contrast_delta=0.1,
-                     brightness_delta=0.2):
-    image = tf.image.random_saturation(
-        image, 1-saturation_delta, 1+saturation_delta)
-    image = tf.image.random_contrast(
-        image, 1-contrast_delta, 1+contrast_delta)
-    image = tf.image.random_brightness(
-        image, brightness_delta)
-    return image
-
-def _random_fliplr(image, p=0.25):
-    r = tf.random.uniform(())
-    mirror_cond = tf.math.less(r, p)
-    image = tf.cond(
-        mirror_cond,
-        lambda: tf.reverse(image, [1]),
-        lambda: image
-    )
-    return image
-
-def preprocess_input(image, target_size, ratio=-1, augment=False):
-
-    if ratio == -1: # ratio = h / w
-        h, w = target_size, target_size
-        image = tf.image.resize(
-            image, (h, w), method='area', preserve_aspect_ratio=True)
-    else:
-        if ratio > 1: # h > w
-            h = target_size
-            w = int(tf.cast(h, tf.float32) / ratio)
-        elif ratio < 1: # w > h
-            w = target_size
-            h = int(tf.cast(w, tf.float32) * ratio)
-        else: # h == w
-            h, w = target_size, target_size
-
-        image = tf.image.resize(image, (h, w), method='area')
-
-    image = tf.cast(image, tf.uint8)
-
-    if augment:
-        image = _spatial_transform(image)
-        image = _pixel_transform(image)
-
+def normalize(image, label):
     image = tf.cast(image, tf.float32) / 255.
-    return image
+    return image, label
 
-def _group_shuffle_df(df_orig, batch_size, sample_frac):
+def create_dataset(dataframe,
+                   undersample=True,
+                   batch_size=32,
+                   target_dim=384,
+                   central_crop=False,
+                   crop_ratio=(0.7, 1.0),
+                   apply_augmentation=False):
 
-    df = df_orig.copy()
+    if undersample:
+        dataframe = dataframe.sample(
+            frac=undersample, replace=False, weights='prob', axis=0)
 
-    df = df.sample(
-        frac=sample_frac, replace=False, weights='weight', axis=0)
+    paths, labels = dataframe.path, dataframe.label
 
-    groups_idx = [
-        df.index[np.where(df.image_target_ratio_group == i)[0]]
-        for i in range(7)
-    ]
-    N = [
-        math.ceil(groups_idx[i].shape[0] / batch_size)
-        for i in range(7)
-    ]
-    groups = [
-        np.array_split(groups_idx[i], N[i]) for i in range(7)
-    ]
+    dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
 
-    groups_flattened = [i for j in groups for i in j]
-    del groups
-    mapping = {}
-    for i, g in enumerate(groups_flattened):
-        for j in g:
-            mapping[j] = i
-    del groups_flattened
-    df['batch'] = df.index.map(mapping)
-    df.sort_values(by='batch', inplace=True)
-
-    groups = [df for _, df in df.groupby('batch')]
-    random.shuffle(groups)
-    groups_no_remainder = []
-    for group in groups:
-        if len(group) == batch_size:
-            groups_no_remainder.append(group)
-    return pd.concat(groups_no_remainder)
-
-def create_dataset(dataframe, training, sample_frac, batch_size, input_size):
-
-    def read_image(image_path):
-        image = tf.io.read_file(image_path)
-        return tf.image.decode_jpeg(image, channels=3)
-
-    df = _group_shuffle_df(
-        dataframe, batch_size, sample_frac=sample_frac if training else 1.0)
-
-    paths, labels, ratios = df.path, df.label, df.image_target_ratio
-
-    dataset = tf.data.Dataset.from_tensor_slices((paths, labels, ratios))
     dataset = dataset.map(
-        lambda x,y,r: (read_image(x), y, r),
-        tf.data.experimental.AUTOTUNE)
-    dataset = dataset.map(
-        lambda x,y,r: (preprocess_input(x, input_size, r, training), y),
-        tf.data.experimental.AUTOTUNE)
+        lambda x, y: (load_image(x, central_crop, crop_ratio, target_dim), y),
+        tf.data.experimental.AUTOTUNE
+    )
+    if apply_augmentation:
+        dataset = dataset.map(
+            lambda x, y: (augmentation.apply_random_jitter(x), y),
+            tf.data.experimental.AUTOTUNE
+        )
+    dataset = dataset.map(normalize, tf.data.experimental.AUTOTUNE)
     dataset = dataset.batch(batch_size)
     dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     return dataset

@@ -30,6 +30,17 @@ CNN_ARCHITECTURES = {
 }
 
 
+class ExtractIntermediateLayers:
+
+    def __new__(cls, model_instance, layers):
+        outputs = {}
+        for layer in model_instance.layers:
+            if layer.name in layers.keys():
+                outputs[layers[layer.name]] = layer.output
+        return tf.keras.Model(
+            inputs=model_instance.input, outputs=outputs)
+
+
 class AutoEncoder(tf.keras.Model):
 
     def __init__(self, name='AutoEncoder'):
@@ -41,7 +52,7 @@ class AutoEncoder(tf.keras.Model):
 
 class Attention(tf.keras.Model):
 
-    def __init__(self, input_dim, decay=1e-4, **kwargs):
+    def __init__(self, input_dim, decay=1e-10, **kwargs):
         super(Attention, self).__init__(**kwargs)
 
         self.conv2d_1 = tf.keras.layers.Conv2D(
@@ -78,21 +89,23 @@ class Attention(tf.keras.Model):
 
 class Delf(tf.keras.Model):
 
-    def __init__(self, n_classes, s, m, input_size=None,
-                 backbone='efficientnet-b0', **kwargs):
+    def __init__(self, n_classes, s, m, input_dim=None,
+                 backbone='resnet-50', **kwargs):
         super(Delf, self).__init__(**kwargs)
 
-        self.backbone = ResNet50(
-            include_top=False,
-            input_shape=[input_size, input_size, 3],
-            weights='imagenet')
-
+        self.backbone = ExtractIntermediateLayers(
+            CNN_ARCHITECTURES[backbone](
+                include_top=False,
+                input_shape=[input_dim, input_dim, 3],
+                weights='imagenet'),
+            {'conv4_block6_out':'block4', 'conv5_block3_out':'block5'}
+        )
         self.pooling = GlobalGeMPooling2D(
             initial_p=3., name='delf/gem', dtype='float32')
 
         self.attention = Attention(
-                input_dim=self.backbone.layers[-1].output_shape[-1],
-                name='Attention')
+            input_dim=self.backbone.output['block4'].shape[-1],
+            name='Attention')
 
         self.desc_fc = tf.keras.layers.Dense(512, name='delf/desc_fc')
         self.attn_fc = tf.keras.layers.Dense(n_classes, name='delf/attn_fc')
@@ -102,11 +115,11 @@ class Delf(tf.keras.Model):
 
 
     def forward_prop_desc(self, images, labels, training=True):
-        feat = self.backbone(images, training=training)
-        x = self.pooling(feat)
-       # x = self.desc_fc(x)
+        features = self.backbone(images, training=training)
+        x = self.pooling(features['block5'])
+        x = self.desc_fc(x)
         x = self.arc_margin([x, labels])
-        return self.softmax(x), feat
+        return self.softmax(x), features
 
     def forward_prop_attn(self, features, training=True):
         x, _, _ = self.attention(features, training=training)
