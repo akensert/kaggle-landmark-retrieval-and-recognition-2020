@@ -64,7 +64,7 @@ class ServedModel(models.Delf):
                                  nms_iou_threshold):
         features = self.backbone(image, training=False)['block4']
         _, attention_probs, _ = self.attention(features, training=False)
-        print(features.shape)
+
         rf_boxes = extraction.compute_receptive_boxes(
             *features[0].shape[:2], rf=291.0, stride=16, padding=143.0)
         boxes, feats, scores = extraction.select_local_features(
