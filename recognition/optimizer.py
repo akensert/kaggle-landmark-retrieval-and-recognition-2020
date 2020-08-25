@@ -1,6 +1,5 @@
 import tensorflow as tf
 
-
 def get_optimizer(opt, steps_per_epoch, lr_max, lr_min,
                   warmup_epochs, decay_epochs, power=1):
 

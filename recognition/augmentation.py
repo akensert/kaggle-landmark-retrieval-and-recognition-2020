@@ -1,20 +1,37 @@
 import tensorflow as tf
 import math
 
-POLICY = {
-    'downscale':  {'range': (0.5, 1.0), 'p': 0.2},
-    'compression':{'range': (85, 100),  'p': 0.2},
-    'brightness': {'range': (0.8, 1.2), 'p': 0.3},
-    'contrast':   {'range': (0.9, 1.1), 'p': 0.2},
-    'gamma':      {'range': (0.9, 1.1), 'p': 0.2},
-    'saturation': {'range': (0.5, 1.5), 'p': 0.3},
-    'hue':        {'range': (0.0, 0.1), 'p': 0.2},
-    'rotation':   {'range': (-10, 10),  'p': 0.3},
-    'shear':      {'range': (-10, 10),  'p': 0.3},
-    'scale':      {'range': (0.8, 1.2), 'p': 0.3},
-    'shift':      {'range': (-32, 32),  'p': 0.0},
-    'noise':      {'range': (0, 10),    'p': 0.2},
-    'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.2}
+# _policy = {
+#     'downscale':  {'range': (0.5, 1.0),  'p': 0.2},
+#     'compression':{'range': (85, 100),   'p': 0.2},
+#     'brightness': {'range': (0.8, 1.2),  'p': 0.3},
+#     'contrast':   {'range': (0.9, 1.1),  'p': 0.2},
+#     'gamma':      {'range': (0.9, 1.1),  'p': 0.2},
+#     'saturation': {'range': (0.5, 1.5),  'p': 0.3},
+#     'hue':        {'range': (0.0, 0.1),  'p': 0.2},
+#     'rotation':   {'range': (-10., 10.), 'p': 0.3},
+#     'shear':      {'range': (-10., 10.), 'p': 0.3},
+#     'scale':      {'range': (0.8, 1.2),  'p': 0.3},
+#     'shift':      {'range': (-32., 32.), 'p': 0.0},
+#     'noise':      {'range': (0., 10.),   'p': 0.2},
+#     'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.2}
+# }
+
+
+_policy = {
+    'downscale':  {'range': (0.5, 1.0),  'p': 0.0},
+    'compression':{'range': (85, 100),   'p': 0.0},
+    'brightness': {'range': (0.8, 1.2),  'p': 0.3},
+    'contrast':   {'range': (0.9, 1.1),  'p': 0.2},
+    'gamma':      {'range': (0.9, 1.1),  'p': 0.0},
+    'saturation': {'range': (0.5, 1.5),  'p': 0.3},
+    'hue':        {'range': (0.0, 0.1),  'p': 0.0},
+    'rotation':   {'range': (-10., 10.), 'p': 0.2},
+    'shear':      {'range': (-10., 10.), 'p': 0.3},
+    'scale':      {'range': (0.8, 1.2),  'p': 0.0},
+    'shift':      {'range': (-32., 32.), 'p': 0.0},
+    'noise':      {'range': (0., 10.),   'p': 0.0},
+    'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.0}
 }
 
 
@@ -173,57 +190,51 @@ def random_cutout(image, num_box_range=(4, 16),
 
 def apply_random_jitter(image):
 
-    if POLICY['downscale']['p'] > tf.random.uniform(()):
-        image = random_downscale(image, POLICY['downscale']['range'])
+    if _policy['downscale']['p'] > tf.random.uniform(()):
+        image = random_downscale(image, _policy['downscale']['range'])
 
-    if POLICY['compression']['p'] > tf.random.uniform(()):
-        image = random_jpeg_compression(image, POLICY['compression']['range'])
+    if _policy['compression']['p'] > tf.random.uniform(()):
+        image = random_jpeg_compression(image, _policy['compression']['range'])
 
-    if POLICY['brightness']['p'] > tf.random.uniform(()):
-        image = random_brightness(image, POLICY['brightness']['range'])
+    if _policy['brightness']['p'] > tf.random.uniform(()):
+        image = random_brightness(image, _policy['brightness']['range'])
 
-    if POLICY['contrast']['p'] > tf.random.uniform(()):
-        image = random_contrast(image, POLICY['contrast']['range'])
+    if _policy['contrast']['p'] > tf.random.uniform(()):
+        image = random_contrast(image, _policy['contrast']['range'])
 
-    if POLICY['gamma']['p'] > tf.random.uniform(()):
-        image = random_gamma(image, POLICY['gamma']['range'])
+    if _policy['gamma']['p'] > tf.random.uniform(()):
+        image = random_gamma(image, _policy['gamma']['range'])
 
-    if POLICY['saturation']['p'] > tf.random.uniform(()):
-        image = random_saturation(image, POLICY['saturation']['range'])
+    if _policy['saturation']['p'] > tf.random.uniform(()):
+        image = random_saturation(image, _policy['saturation']['range'])
 
-    if POLICY['hue']['p'] > tf.random.uniform(()):
-        image = random_hue(image, POLICY['hue']['range'])
+    if _policy['hue']['p'] > tf.random.uniform(()):
+        image = random_hue(image, _policy['hue']['range'])
 
-    if POLICY['rotation']['p'] > tf.random.uniform(()):
-        rotation = (-0, 0)
-    else:
-        rotation = POLICY['rotation']['range']
+    rotation = (-0.0, 0.0)
+    shear = (-0.0, 0.0)
+    scale = (1.0, 1.0)
+    shift = (-0.0, 0.0)
 
-    if POLICY['shear']['p'] > tf.random.uniform(()):
-        shear = (-0, 0)
-    else:
-        shear = POLICY['shear']['range']
+    if _policy['rotation']['p'] > tf.random.uniform(()):
+        rotation = _policy['rotation']['range']
 
-    if POLICY['scale']['p'] > tf.random.uniform(()):
-        scale = (1, 1)
-    else:
-        scale = POLICY['scale']['range']
+    if _policy['shear']['p'] > tf.random.uniform(()):
+        shear = _policy['shear']['range']
 
-    if POLICY['shift']['p'] > tf.random.uniform(()):
-        shift = (-0, 0)
-    else:
-        shift = POLICY['shift']['range']
+    if _policy['scale']['p'] > tf.random.uniform(()):
+        scale = _policy['scale']['range']
 
-    image = random_spatial_transform(
-        image,
-        POLICY['rotation']['range'], POLICY['shear']['range'],
-        POLICY['scale']['range'], POLICY['shift']['range'])
+    if _policy['shift']['p'] > tf.random.uniform(()):
+        shift = _policy['shift']['range']
 
-    if POLICY['noise']['p'] > tf.random.uniform(()):
-        image = random_gaussian_noise(image, POLICY['noise']['range'])
+    image = random_spatial_transform(image, rotation, shear, scale, shift)
 
-    if POLICY['cutout']['p'] > tf.random.uniform(()):
+    if _policy['noise']['p'] > tf.random.uniform(()):
+        image = random_gaussian_noise(image, _policy['noise']['range'])
+
+    if _policy['cutout']['p'] > tf.random.uniform(()):
         image = random_cutout(
-            image, POLICY['cutout']['range'], POLICY['cutout']['size'])
+            image, _policy['cutout']['range'], _policy['cutout']['size'])
 
     return image

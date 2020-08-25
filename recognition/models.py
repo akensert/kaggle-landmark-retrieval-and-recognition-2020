@@ -1,44 +1,51 @@
 import tensorflow as tf
 
-from backbones import efficientnet_bn_sync as efficientnet
-from backbones import resnet_bn_sync as resnet
-from backbones import densenet_bn_sync as densenet
-from backbones import inception_bn_sync as inception
-from backbones import inceptionresnet_bn_sync as inceptionresnet
-from backbones import xception_bn_sync as xception
-
+from backbones import (
+    efficientnet_bn_sync,
+    resnet_bn_sync,
+    densenet_bn_sync,
+    inception_bn_sync,
+    inceptionresnet_bn_sync,
+    xception_bn_sync
+)
 from layers import GlobalGeMPooling2D, ArcMarginProduct, AddMarginProduct
 
-CNN_ARCHITECTURES = {
-    'efficientnet-b0':    efficientnet.EfficientNetB0,
-    'efficientnet-b1':    efficientnet.EfficientNetB1,
-    'efficientnet-b2':    efficientnet.EfficientNetB2,
-    'efficientnet-b3':    efficientnet.EfficientNetB3,
-    'efficientnet-b4':    efficientnet.EfficientNetB4,
-    'efficientnet-b5':    efficientnet.EfficientNetB5,
-    'efficientnet-b6':    efficientnet.EfficientNetB6,
-    'efficientnet-b7':    efficientnet.EfficientNetB7,
-    'resnet-50':          resnet.ResNet50,
-    'resnet-101':         resnet.ResNet101,
-    'resnet-152':         resnet.ResNet152,
-    'densenet-121':       densenet.DenseNet121,
-    'densenet-169':       densenet.DenseNet169,
-    'densenet-201':       densenet.DenseNet201,
-    'inception-v3':       inception.InceptionV3,
-    'inceptionresnet-v2': inceptionresnet.InceptionResNetV2,
-    'xception':           xception.Xception,
+
+_architectures = {
+    'efficientnet-b0':    efficientnet_bn_sync.EfficientNetB0,
+    'efficientnet-b1':    efficientnet_bn_sync.EfficientNetB1,
+    'efficientnet-b2':    efficientnet_bn_sync.EfficientNetB2,
+    'efficientnet-b3':    efficientnet_bn_sync.EfficientNetB3,
+    'efficientnet-b4':    efficientnet_bn_sync.EfficientNetB4,
+    'efficientnet-b5':    efficientnet_bn_sync.EfficientNetB5,
+    'efficientnet-b6':    efficientnet_bn_sync.EfficientNetB6,
+    'efficientnet-b7':    efficientnet_bn_sync.EfficientNetB7,
+    'resnet-50':          resnet_bn_sync.ResNet50,
+    'resnet-101':         resnet_bn_sync.ResNet101,
+    'resnet-152':         resnet_bn_sync.ResNet152,
+    'densenet-121':       densenet_bn_sync.DenseNet121,
+    'densenet-169':       densenet_bn_sync.DenseNet169,
+    'densenet-201':       densenet_bn_sync.DenseNet201,
+    'inception-v3':       inception_bn_sync.InceptionV3,
+    'inceptionresnet-v2': inceptionresnet_bn_sync.InceptionResNetV2,
+    'xception':           xception_bn_sync.Xception,
 }
 
 
 class ExtractIntermediateLayers:
 
-    def __new__(cls, model_instance, layers):
+    def __new__(cls, model_object, input_dim, layers):
+        model = model_object(
+            include_top=False,
+            input_shape=[input_dim, input_dim, 3],
+            weights='imagenet'
+        )
         outputs = {}
-        for layer in model_instance.layers:
+        for layer in model.layers:
             if layer.name in layers.keys():
                 outputs[layers[layer.name]] = layer.output
         return tf.keras.Model(
-            inputs=model_instance.input, outputs=outputs)
+            inputs=model.input, outputs=outputs)
 
 
 class AutoEncoder(tf.keras.Model):
@@ -52,11 +59,11 @@ class AutoEncoder(tf.keras.Model):
 
 class Attention(tf.keras.Model):
 
-    def __init__(self, input_dim, decay=1e-10, **kwargs):
+    def __init__(self, decay=1e-4, **kwargs):
         super(Attention, self).__init__(**kwargs)
 
         self.conv2d_1 = tf.keras.layers.Conv2D(
-            filters=input_dim,
+            filters=512,
             kernel_size=1,
             kernel_regularizer=tf.keras.regularizers.l2(decay),
             padding='same',
@@ -89,27 +96,24 @@ class Attention(tf.keras.Model):
 
 class Delf(tf.keras.Model):
 
-    def __init__(self, n_classes, s, m, input_dim=None,
+    def __init__(self, global_units, n_classes, p, s, m, input_dim=None,
                  backbone='resnet-50', **kwargs):
         super(Delf, self).__init__(**kwargs)
 
+        self.input_dim = input_dim
+
         self.backbone = ExtractIntermediateLayers(
-            CNN_ARCHITECTURES[backbone](
-                include_top=False,
-                input_shape=[input_dim, input_dim, 3],
-                weights='imagenet'),
-            {'conv4_block6_out':'block4', 'conv5_block3_out':'block5'}
+            model_object=_architectures[backbone],
+            input_dim=input_dim,
+            layers={
+                'conv4_block6_out':'block4',
+                'conv5_block3_out':'block5'
+            }
         )
-        self.pooling = GlobalGeMPooling2D(
-            initial_p=3., name='delf/gem', dtype='float32')
-
-        self.attention = Attention(
-            input_dim=self.backbone.output['block4'].shape[-1],
-            name='Attention')
-
-        self.desc_fc = tf.keras.layers.Dense(512, name='delf/desc_fc')
-        self.attn_fc = tf.keras.layers.Dense(n_classes, name='delf/attn_fc')
-
+        self.pooling = GlobalGeMPooling2D(initial_p=p, dtype='float32')
+        self.attention = Attention()
+        self.desc_fc = tf.keras.layers.Dense(global_units)
+        self.attn_fc = tf.keras.layers.Dense(n_classes)
         self.arc_margin = ArcMarginProduct(n_classes, s=s, m=m, dtype='float32')
         self.softmax = tf.keras.layers.Softmax(dtype='float32')
 
@@ -119,7 +123,7 @@ class Delf(tf.keras.Model):
         x = self.pooling(features['block5'])
         x = self.desc_fc(x)
         x = self.arc_margin([x, labels])
-        return self.softmax(x), features
+        return self.softmax(x), features['block4']
 
     def forward_prop_attn(self, features, training=True):
         x, _, _ = self.attention(features, training=training)
@@ -136,3 +140,12 @@ class Delf(tf.keras.Model):
     def get_attention_weights(self):
         return (self.attention.trainable_weights +
                 self.attn_fc.trainable_weights)
+
+    def call(self, inputs, training=False):
+        '''
+        Although it may be used for the training loop, this call method
+        is used for building->loading weights only.
+        '''
+        out1, block4 = self.forward_prop_desc(*inputs, training=training)
+        out2 = self.forward_prop_attn(block4, training=training)
+        return (out1, out2)

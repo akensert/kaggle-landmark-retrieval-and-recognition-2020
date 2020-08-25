@@ -1,16 +1,10 @@
 import tensorflow as tf
-import numpy as np
-import pandas as pd
-import glob
-import math
-import tqdm
-import random
 
 import augmentation
 
 
 @tf.function
-def load_image(image_path, central_crop=False, crop_ratio=(0.7, 1.0), dim=512):
+def load_image(image_path, dim=512, central_crop=False, crop_ratio=(0.7, 1.0)):
     '''
     This functions takes an image path as input, reads the image, then central
     crops it or random crops it. Both type of croppings will keep the aspect ratio
@@ -78,8 +72,10 @@ def load_image(image_path, central_crop=False, crop_ratio=(0.7, 1.0), dim=512):
         )
 
     min_dim = tf.reduce_min(shape)
-    crop_size = tf.cast(min_dim, 'float32') * tf.random.uniform((), *crop_ratio)
-
+    crop_size = (
+        tf.cast(min_dim, 'float32')
+        * tf.random.uniform((), crop_ratio[0], crop_ratio[1])
+    )
     y_max_offset = tf.cast(shape[0], dtype='float32')-crop_size
     x_max_offset = tf.cast(shape[1], dtype='float32')-crop_size
     min_offset = tf.constant(0, dtype='float32')
@@ -101,13 +97,13 @@ def load_image(image_path, central_crop=False, crop_ratio=(0.7, 1.0), dim=512):
             dtype='uint8'
         )
 
-def normalize(image, label):
+def normalize(image):
     image = tf.cast(image, tf.float32) / 255.
-    return image, label
+    return image
 
 def create_dataset(dataframe,
                    undersample=True,
-                   batch_size=32,
+                   batch_size=16,
                    target_dim=384,
                    central_crop=False,
                    crop_ratio=(0.7, 1.0),
@@ -122,7 +118,7 @@ def create_dataset(dataframe,
     dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
 
     dataset = dataset.map(
-        lambda x, y: (load_image(x, central_crop, crop_ratio, target_dim), y),
+        lambda x, y: (load_image(x, target_dim, central_crop, crop_ratio), y),
         tf.data.experimental.AUTOTUNE
     )
     if apply_augmentation:
@@ -130,7 +126,10 @@ def create_dataset(dataframe,
             lambda x, y: (augmentation.apply_random_jitter(x), y),
             tf.data.experimental.AUTOTUNE
         )
-    dataset = dataset.map(normalize, tf.data.experimental.AUTOTUNE)
+    dataset = dataset.map(
+        lambda x, y: (normalize(x), y),
+        tf.data.experimental.AUTOTUNE
+    )
     dataset = dataset.batch(batch_size)
     dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
     return dataset
