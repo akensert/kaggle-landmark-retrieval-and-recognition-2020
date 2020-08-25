@@ -5,6 +5,7 @@ from zipfile import ZipFile
 import config
 import generator
 import models
+import extraction
 
 class ServedModel(models.Delf):
 
@@ -52,15 +53,37 @@ class ServedModel(models.Delf):
 
     @tf.function(
         input_signature=[
-            tf.TensorSpec([1, None, None, 3], tf.float32)])
-    def extract_local_descriptor(self, image):
-        return None # TODO
+            tf.TensorSpec([1, None, None, 3], tf.float32),
+            tf.TensorSpec([], tf.float32),
+            tf.TensorSpec([], tf.int32),
+            tf.TensorSpec([], tf.float32)])
+    def extract_local_descriptor(self,
+                                 image,
+                                 attention_threshold,
+                                 nms_max_feature_num,
+                                 nms_iou_threshold):
+        features = self.backbone(image, training=False)['block4']
+        _, attention_probs, _ = self.attention(features, training=False)
+        print(features.shape)
+        rf_boxes = extraction.compute_receptive_boxes(
+            *features[0].shape[:2], rf=291.0, stride=16, padding=143.0)
+        boxes, feats, scores = extraction.select_local_features(
+            attention_probs=attention_probs,
+            features=features,
+            rf_boxes=rf_boxes,
+            attention_threshold=attention_threshold,
+            nms_max_feature_num=nms_max_feature_num,
+            nms_iou_threshold=nms_iou_threshold)
+        points = extraction.compute_keypoint_centers(boxes)
+        return feats, points
 
     @tf.function(
         input_signature=[
             tf.TensorSpec([1, None, None, 3], tf.float32)])
     def extract_local_prediction(self, image):
-        return None # TODO
+        features = self.backbone(image, training=False)['block4']
+        return tf.squeeze(
+            self.forward_prop_attn(features, training=False))
 
     def save(self, path, and_zip=True):
         # save model
