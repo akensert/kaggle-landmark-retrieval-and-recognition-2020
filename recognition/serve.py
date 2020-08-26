@@ -7,6 +7,7 @@ import generator
 import models
 import extraction
 
+
 class ServedModel(models.Delf):
 
     def __init__(
@@ -27,21 +28,32 @@ class ServedModel(models.Delf):
     @tf.function(
         input_signature=[
             tf.TensorSpec([], tf.string),
+            tf.TensorSpec([], tf.string),
             tf.TensorSpec([], tf.int32),
             tf.TensorSpec([], tf.bool),
             tf.TensorSpec([2,], tf.float32)])
-    def extract_image(self, image_path, dim, central_crop, crop_ratio):
+    def extract_image(self, path, image_id, dim, central_crop, crop_ratio):
+        image_path = (
+            path + '/' +
+            tf.strings.substr(image_id, 0, 1) + '/' +
+            tf.strings.substr(image_id, 1, 1) + '/' +
+            tf.strings.substr(image_id, 2, 1) + '/' +
+            image_id + '.jpg'
+        )
         image = generator.load_image(
             image_path, dim, central_crop, crop_ratio)
         return generator.normalize(image)[tf.newaxis]
 
     @tf.function(
         input_signature=[
-            tf.TensorSpec([1, None, None, 3], tf.float32)])
-    def extract_global_descriptor(self, image):
+            tf.TensorSpec([1, None, None, 3], tf.float32),
+            tf.TensorSpec([], tf.bool)])
+    def extract_global_descriptor(self, image, l2_norm):
         features = self.backbone(image, training=False)
         x = self.pooling(features['block5'])
         x = self.desc_fc(x)
+        if l2_norm:
+            x = tf.nn.l2_normalize(x, axis=1)
         return tf.squeeze(x)
 
     @tf.function(
@@ -54,11 +66,13 @@ class ServedModel(models.Delf):
     @tf.function(
         input_signature=[
             tf.TensorSpec([1, None, None, 3], tf.float32),
+            tf.TensorSpec([], tf.bool),
             tf.TensorSpec([], tf.float32),
             tf.TensorSpec([], tf.int32),
             tf.TensorSpec([], tf.float32)])
     def extract_local_descriptor(self,
                                  image,
+                                 l2_norm,
                                  attention_threshold,
                                  nms_max_feature_num,
                                  nms_iou_threshold):
@@ -74,6 +88,8 @@ class ServedModel(models.Delf):
             attention_threshold=attention_threshold,
             nms_max_feature_num=nms_max_feature_num,
             nms_iou_threshold=nms_iou_threshold)
+        if l2_norm:
+            feats = tf.nn.l2_normalize(feats, axis=1)
         points = extraction.compute_keypoint_centers(boxes)
         return feats, points
 
@@ -84,6 +100,45 @@ class ServedModel(models.Delf):
         features = self.backbone(image, training=False)['block4']
         return tf.squeeze(
             self.forward_prop_attn(features, training=False))
+
+    @tf.function(
+        input_signature=[
+            tf.TensorSpec([1, None, None, 3], tf.float32),
+            tf.TensorSpec([], tf.bool),
+            tf.TensorSpec([], tf.float32),
+            tf.TensorSpec([], tf.int32),
+            tf.TensorSpec([], tf.float32)])
+    def extract_global_and_local_descriptor(self,
+                                            image,
+                                            l2_norm,
+                                            attention_threshold,
+                                            nms_max_feature_num,
+                                            nms_iou_threshold):
+        # Pass image through backbone (obtain two conv-blocks)
+        features = self.backbone(image, training=False)
+        block5, block4 = features['block5'], features['block4']
+        # Generate global descriptor
+        global_desc = self.pooling(block5)
+        global_desc = self.desc_fc(global_desc)
+        global_desc = tf.squeeze(global_desc, axis=0)
+        if l2_norm:
+            global_desc = tf.nn.l2_normalize(global_desc)
+
+        # Generate local descriptor (with keypoint centers)
+        _, attention_probs, _ = self.attention(block4, training=False)
+        rf_boxes = extraction.compute_receptive_boxes(
+            *block4[0].shape[:2], rf=291.0, stride=16, padding=143.0)
+        boxes, local_desc, scores = extraction.select_local_features(
+            attention_probs=attention_probs,
+            features=block4,
+            rf_boxes=rf_boxes,
+            attention_threshold=attention_threshold,
+            nms_max_feature_num=nms_max_feature_num,
+            nms_iou_threshold=nms_iou_threshold)
+        if l2_norm:
+            local_desc = tf.nn.l2_normalize(local_desc, axis=1)
+        points = extraction.compute_keypoint_centers(boxes)
+        return global_desc, (local_desc, points)
 
     def save(self, path, and_zip=True):
         # save model
@@ -100,19 +155,13 @@ class ServedModel(models.Delf):
 
 
 if __name__ == '__main__':
-    import argparse
-    import glob
+
     import logging
     tf.get_logger().setLevel(logging.ERROR)
     import warnings
     warnings.filterwarnings("ignore")
 
     tf.config.set_visible_devices([], 'GPU')
-
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--test', type=bool, default=False)
-    args = parser.parse_args()
 
     model = ServedModel(
         config.config['finetuned_weights'],
@@ -126,19 +175,3 @@ if __name__ == '__main__':
 
     print("Saving model...")
     model.save('../output/served_models/model')
-
-    if args.test:
-        # test loading
-        print("Loading model...")
-        imported = tf.saved_model.load('../output/served_models/model')
-
-        image = imported.extract_image(
-            glob.glob('../input/' + 'train/0/0/0/*')[0],
-            dim=config.config['input_dim'],
-            central_crop=True,
-            crop_ratio=(0.7, 1.0),
-        )
-
-        print("Global descriptor =\n")
-        global_desc = imported.extract_global_descriptor(image)
-        print(global_desc)

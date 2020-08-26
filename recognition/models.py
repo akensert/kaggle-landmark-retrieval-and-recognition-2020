@@ -144,7 +144,7 @@ class Delf(tf.keras.Model):
     def call(self, inputs, training=False):
         '''
         Although it may be used for the training loop, this call method
-        is used for building->loading weights only.
+        is used for model.build(...)-->model.load_weights(...) only.
         '''
         out1, block4 = self.forward_prop_desc(*inputs, training=training)
         out2 = self.forward_prop_attn(block4, training=training)

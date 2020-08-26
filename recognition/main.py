@@ -2,7 +2,6 @@ import numpy as np
 import tensorflow as tf
 import math
 import pandas as pd
-from sklearn import model_selection
 import tqdm
 import os
 import glob
@@ -41,10 +40,10 @@ else:
     strategy = tf.distribute.MirroredStrategy()
     print("Setting strategy to MirroredStrategy()")
 
-# import logging
-# tf.get_logger().setLevel(logging.ERROR)
-# import warnings
-# warnings.filterwarnings("ignore")
+import logging
+tf.get_logger().setLevel(logging.ERROR)
+import warnings
+warnings.filterwarnings("ignore")
 
 class DistributedModel:
 
@@ -135,12 +134,17 @@ class DistributedModel:
 
     @tf.function
     def _distributed_train_step(self, dist_inputs):
-        per_replica_loss = self.strategy.run(
+        per_repl_loss1, per_repl_loss2 = self.strategy.run(
             self._train_step, args=(dist_inputs,))
-        return self.strategy.reduce(
+        return (
+        self.strategy.reduce(
             tf.distribute.ReduceOp.SUM,
-            per_replica_loss,
-            axis=None
+            per_repl_loss1,
+            axis=None),
+        self.strategy.reduce(
+            tf.distribute.ReduceOp.SUM,
+            per_repl_loss2,
+            axis=None)
         )
 
     def train(self, train_df, epochs, undersample, save_path):
