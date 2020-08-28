@@ -10,12 +10,17 @@ import extraction
 
 class ServedModel(models.Delf):
 
-    def __init__(
-        self, weights, global_units, n_classes, p, s, m, input_dim, backbone):
+    def __init__(self,
+                 weights,
+                 dense_units,
+                 margin_type,
+                 scale,
+                 margin,
+                 input_dim):
 
         # initialize delf model
         super(ServedModel, self).__init__(
-            global_units, n_classes, p, s, m, input_dim, backbone)
+            dense_units, margin_type, scale, margin, input_dim)
 
         # build delf model (so that weights can be loaded)
         super(ServedModel, self).__call__([
@@ -166,12 +171,10 @@ if __name__ == '__main__':
     model = ServedModel(
         config.config['finetuned_weights'],
         config.config['dense_units'],
-        config.config['n_classes'],
-        config.config['gem_p'],
+        config.config['loss']['type'],
         config.config['loss']['scale'],
         config.config['loss']['margin'],
-        config.config['input_dim'],
-        config.config['backbone'])
+        config.config['input_dim'])
 
     print("Saving model...")
     model.save('../output/served_models/model')

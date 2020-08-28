@@ -4,7 +4,7 @@ import augmentation
 
 
 @tf.function
-def load_image(image_path, dim=512, central_crop=False, crop_ratio=(0.7, 1.0)):
+def load_image(image_path, dim, central_crop, crop_ratio):
     '''
     This functions takes an image path as input, reads the image, then central
     crops it or random crops it. Both type of croppings will keep the aspect ratio
@@ -98,38 +98,46 @@ def load_image(image_path, dim=512, central_crop=False, crop_ratio=(0.7, 1.0)):
         )
 
 def normalize(image):
-    image = tf.cast(image, tf.float32) / 255.
-    return image
+    return tf.keras.applications.resnet.preprocess_input(
+        tf.cast(image, tf.float32))
+
+def filter_by_probs(x, y, p):
+    if p > tf.random.uniform((), 0, 1):
+        return True
+    return False
 
 def create_dataset(dataframe,
-                   undersample=True,
-                   batch_size=16,
-                   target_dim=384,
-                   central_crop=False,
-                   crop_ratio=(0.7, 1.0),
-                   apply_augmentation=False):
+                   training,
+                   batch_size,
+                   target_dim,
+                   central_crop,
+                   crop_ratio,
+                   apply_augmentation):
 
-    if undersample:
-        dataframe = dataframe.sample(
-            frac=undersample, replace=False, weights='prob', axis=0)
+    paths, labels, probs = dataframe.path, dataframe.label, dataframe.prob
 
-    paths, labels = dataframe.path, dataframe.label
+    dataset = tf.data.Dataset.from_tensor_slices((paths, labels, probs))
 
-    dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
+    if training:
+        dataset = dataset.shuffle(100_000)
 
     dataset = dataset.map(
-        lambda x, y: (load_image(x, target_dim, central_crop, crop_ratio), y),
+        lambda x, y, p: (load_image(x, target_dim, central_crop, crop_ratio), y, p),
         tf.data.experimental.AUTOTUNE
     )
+
+    if training:
+        dataset = dataset.filter(filter_by_probs)
+
     if apply_augmentation:
         dataset = dataset.map(
-            lambda x, y: (augmentation.apply_random_jitter(x), y),
+            lambda x, y, p: (augmentation.apply_random_jitter(x), y, p),
             tf.data.experimental.AUTOTUNE
         )
+
     dataset = dataset.map(
-        lambda x, y: (normalize(x), y),
+        lambda x, y, p: (normalize(x), y),
         tf.data.experimental.AUTOTUNE
     )
     dataset = dataset.batch(batch_size)
-    dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
-    return dataset
+    return dataset.prefetch(tf.data.experimental.AUTOTUNE)

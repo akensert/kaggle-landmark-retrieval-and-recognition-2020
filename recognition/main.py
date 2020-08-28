@@ -1,16 +1,25 @@
+"""
+What's hardcoded:
+
+    generator.py -> normalize()
+    model.py     -> Delf() -> _architectures{}
+    serve.py     -> ServedModel() -> extraction.compute_receptive_boxes()
+"""
+
+
 import numpy as np
 import tensorflow as tf
+import tensorflow_addons as tfa
 import math
 import pandas as pd
 import tqdm
 import os
 import glob
 
+
 from generator import create_dataset
 from models import Delf
-from optimizer import get_optimizer
 from config import config
-
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 num_gpus = len(gpus)
@@ -45,26 +54,37 @@ tf.get_logger().setLevel(logging.ERROR)
 import warnings
 warnings.filterwarnings("ignore")
 
+
 class DistributedModel:
 
-    def __init__(self, backbone, input_dim, n_classes,
-                 batch_size, dense_units, dropout_rate, gem_p, loss,
-                 scale, margin, clip_grad, checkpoint_weights,
-                 optimizer, strategy, mixed_precision):
+    def __init__(self,
+                 input_dim,
+                 batch_size,
+                 dense_units,
+                 margin_type,
+                 scale,
+                 margin,
+                 checkpoint_weights,
+                 optimizer,
+                 strategy,
+                 mixed_precision):
 
         self.model = Delf(
-            dense_units, n_classes, gem_p, scale, margin,
-            input_dim=input_dim, backbone=backbone, name='DELF')
+            dense_units=dense_units,
+            margin_type=margin_type,
+            scale=scale,
+            margin=margin,
+            input_dim=input_dim,
+            name='DELF')
 
+        self.clip_grad = 10
         self.input_dim = input_dim
         self.batch_size = batch_size
-
 
         if checkpoint_weights:
             self.model.build([[None, input_dim, input_dim, 3], [None]])
             self.model.load_weights(checkpoint_weights + '.h5')
 
-        self.clip_grad = clip_grad
         self.optimizer = optimizer
         self.strategy = strategy
         self.mixed_precision = mixed_precision
@@ -100,71 +120,62 @@ class DistributedModel:
         self.optimizer.apply_gradients(zip(clipped, weights))
 
     def _train_step(self, inputs):
+
         images, labels = inputs
 
-        with tf.GradientTape() as desc_tape:
+        with tf.GradientTape() as desc_tape, tf.GradientTape() as attn_tape:
 
-            probs, feat_block4 = self.model.forward_prop_desc(images, labels, training=True)
-            desc_loss = self._compute_loss(labels, probs)
+            desc_probs, intermediate_feat = self.model.forward_prop_desc(
+                images, labels, training=True)
+            intermediate_feat = tf.stop_gradient(intermediate_feat)
+            attn_probs = self.model.forward_prop_attn(
+                intermediate_feat, training=True)
+
+            desc_loss = self._compute_loss(labels, desc_probs)
+            attn_loss = self._compute_loss(labels, attn_probs)
 
             self.train_desc_loss.update_state(desc_loss)
-            self.train_desc_accu.update_state(labels, probs)
+            self.train_desc_accu.update_state(labels, desc_probs)
+            self.train_attn_loss.update_state(attn_loss)
+            self.train_attn_accu.update_state(labels, attn_probs)
 
             if self.mixed_precision:
                 desc_loss = self.optimizer.get_scaled_loss(desc_loss)
-
-        self._backprop_loss(desc_tape, desc_loss, self.model.get_descriptor_weights)
-
-        with tf.GradientTape() as attn_tape:
-
-            feat_block4 = tf.stop_gradient(feat_block4)
-            probs = self.model.forward_prop_attn(feat_block4, training=True)
-
-            attn_loss = self._compute_loss(labels, probs)
-
-            self.train_attn_loss.update_state(attn_loss)
-            self.train_attn_accu.update_state(labels, probs)
-
-            if self.mixed_precision:
                 attn_loss = self.optimizer.get_scaled_loss(attn_loss)
 
+        self._backprop_loss(desc_tape, desc_loss, self.model.get_descriptor_weights)
         self._backprop_loss(attn_tape, attn_loss, self.model.get_attention_weights)
 
         return desc_loss, attn_loss
 
     @tf.function
     def _distributed_train_step(self, dist_inputs):
-        per_repl_loss1, per_repl_loss2 = self.strategy.run(
+        per_repl_desc_loss, per_repl_attn_loss = self.strategy.run(
             self._train_step, args=(dist_inputs,))
         return (
         self.strategy.reduce(
             tf.distribute.ReduceOp.SUM,
-            per_repl_loss1,
+            per_repl_desc_loss,
             axis=None),
         self.strategy.reduce(
             tf.distribute.ReduceOp.SUM,
-            per_repl_loss2,
+            per_repl_attn_loss,
             axis=None)
         )
 
-    def train(self, train_df, epochs, undersample, save_path):
+    def train(self, train_df, epochs, save_path):
 
         for epoch in range(epochs):
 
-            if epoch == 36:
-                self.batch_size = 10
-                self.input_dim = 512
-
             train_ds = create_dataset(
                 dataframe=train_df,
-                undersample=undersample,
+                training=True,
                 batch_size=self.batch_size,
                 target_dim=self.input_dim,
                 central_crop=False,
                 crop_ratio=(0.7, 1.0),
                 apply_augmentation=True
             )
-
 
             train_ds = self.strategy.experimental_distribute_dataset(train_ds)
             train_ds = tqdm.tqdm(train_ds)
@@ -188,17 +199,6 @@ class DistributedModel:
             self.train_attn_accu.reset_states()
 
 
-def read_submission_file(input_path, alpha=0.5):
-    files_paths = glob.glob(input_path + 'test/*/*/*/*')
-    mapping = {}
-    for path in files_paths:
-        mapping[path.split('/')[-1].split('.')[0]] = path
-    df = pd.read_csv(input_path + 'sample_submission.csv')
-    df['path'] = df['id'].map(mapping)
-    df['label'] = -1
-    df['prob'] = -1
-    return df
-
 def read_train_file(input_path, alpha=0.5):
     files_paths = glob.glob(input_path + 'train/*/*/*/*')
     mapping = {}
@@ -206,54 +206,34 @@ def read_train_file(input_path, alpha=0.5):
         mapping[path.split('/')[-1].split('.')[0]] = path
     df = pd.read_csv(input_path + 'train.csv')
     df['path'] = df['id'].map(mapping)
-
     counts_map = dict(
         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
-    df['counts'] = df['landmark_id'].map(counts_map)
-    df['prob'] = (
-        (1/df.counts**alpha) / (1/df.counts**alpha).max()).astype(np.float32)
+    counts = df['landmark_id'].map(counts_map)
+    df['prob'] = ((1/counts**alpha) / (1/counts**alpha).max()).astype(np.float32)
     uniques = df['landmark_id'].unique()
     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
-    return df, dict(zip(df.label, df.landmark_id))
+    return df
 
-
-submission_df = read_submission_file('../input/')
-train_df, mapping = read_train_file('../input/')
-
-print("train shape      =", train_df.shape)
-print("submission shape =", submission_df.shape)
+train_df = read_train_file('../input/')
 
 with strategy.scope():
 
-    optimizer = get_optimizer(
-        opt=config['optimizer'],
-        steps_per_epoch=config['learning_rate']['steps_per_epoch'],
-        lr_max=config['learning_rate']['max'],
-        lr_min=config['learning_rate']['min'],
-        warmup_epochs=config['learning_rate']['warmup_epochs'],
-        decay_epochs=config['learning_rate']['decay_epochs'],
-        power=config['learning_rate']['power'],
-    )
-
     dist_model = DistributedModel(
-        backbone=config['backbone'],
         input_dim=config['input_dim'],
-        n_classes=config['n_classes'],
         batch_size=config['batch_size'],
         dense_units=config['dense_units'],
-        dropout_rate=config['dropout_rate'],
-        gem_p=config['gem_p'],
-        loss=config['loss']['type'],
+        margin_type=config['loss']['type'],
         scale=config['loss']['scale'],
         margin=config['loss']['margin'],
-        clip_grad=config['clip_grad'],
         checkpoint_weights=config['checkpoint_weights'],
-        optimizer=optimizer,
+        optimizer=tfa.optimizers.SGDW(
+            weight_decay=config['optimizer']['weight_decay'],
+            learning_rate=config['optimizer']['learning_rate'],
+            momentum=config['optimizer']['momentum']),
         strategy=strategy,
         mixed_precision=mixed_precision)
 
     dist_model.train(
         train_df=train_df,
         epochs=config['n_epochs'],
-        undersample=config['undersample'],
         save_path=config['save_path'])

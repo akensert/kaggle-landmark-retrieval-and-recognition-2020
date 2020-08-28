@@ -1,34 +1,25 @@
 import tensorflow as tf
 
-from backbones import (
-    efficientnet_bn_sync,
-    resnet_bn_sync,
-    densenet_bn_sync,
-    inception_bn_sync,
-    inceptionresnet_bn_sync,
-    xception_bn_sync
-)
 from layers import GlobalGeMPooling2D, ArcMarginProduct, AddMarginProduct
 
-
 _architectures = {
-    'efficientnet-b0':    efficientnet_bn_sync.EfficientNetB0,
-    'efficientnet-b1':    efficientnet_bn_sync.EfficientNetB1,
-    'efficientnet-b2':    efficientnet_bn_sync.EfficientNetB2,
-    'efficientnet-b3':    efficientnet_bn_sync.EfficientNetB3,
-    'efficientnet-b4':    efficientnet_bn_sync.EfficientNetB4,
-    'efficientnet-b5':    efficientnet_bn_sync.EfficientNetB5,
-    'efficientnet-b6':    efficientnet_bn_sync.EfficientNetB6,
-    'efficientnet-b7':    efficientnet_bn_sync.EfficientNetB7,
-    'resnet-50':          resnet_bn_sync.ResNet50,
-    'resnet-101':         resnet_bn_sync.ResNet101,
-    'resnet-152':         resnet_bn_sync.ResNet152,
-    'densenet-121':       densenet_bn_sync.DenseNet121,
-    'densenet-169':       densenet_bn_sync.DenseNet169,
-    'densenet-201':       densenet_bn_sync.DenseNet201,
-    'inception-v3':       inception_bn_sync.InceptionV3,
-    'inceptionresnet-v2': inceptionresnet_bn_sync.InceptionResNetV2,
-    'xception':           xception_bn_sync.Xception,
+    'efficientnet-b0':    tf.keras.applications.EfficientNetB0,
+    'efficientnet-b1':    tf.keras.applications.EfficientNetB1,
+    'efficientnet-b2':    tf.keras.applications.EfficientNetB2,
+    'efficientnet-b3':    tf.keras.applications.EfficientNetB3,
+    'efficientnet-b4':    tf.keras.applications.EfficientNetB4,
+    'efficientnet-b5':    tf.keras.applications.EfficientNetB5,
+    'efficientnet-b6':    tf.keras.applications.EfficientNetB6,
+    'efficientnet-b7':    tf.keras.applications.EfficientNetB7,
+    'resnet-50':          tf.keras.applications.ResNet50,
+    'resnet-101':         tf.keras.applications.ResNet101,
+    'resnet-152':         tf.keras.applications.ResNet152,
+    'densenet-121':       tf.keras.applications.DenseNet121,
+    'densenet-169':       tf.keras.applications.DenseNet169,
+    'densenet-201':       tf.keras.applications.DenseNet201,
+    'inception-v3':       tf.keras.applications.InceptionV3,
+    'inceptionresnet-v2': tf.keras.applications.InceptionResNetV2,
+    'xception':           tf.keras.applications.Xception,
 }
 
 
@@ -49,7 +40,9 @@ class ExtractIntermediateLayers:
 
 
 class AutoEncoder(tf.keras.Model):
-
+    '''
+    TODO
+    '''
     def __init__(self, name='AutoEncoder'):
         super(AutoEncoder, self).__init__(name=name)
 
@@ -96,33 +89,43 @@ class Attention(tf.keras.Model):
 
 class Delf(tf.keras.Model):
 
-    def __init__(self, global_units, n_classes, p, s, m, input_dim=None,
-                 backbone='resnet-50', **kwargs):
+    def __init__(self,
+                 dense_units,
+                 margin_type,
+                 scale,
+                 margin,
+                 input_dim,
+                 **kwargs):
+
         super(Delf, self).__init__(**kwargs)
 
         self.input_dim = input_dim
 
         self.backbone = ExtractIntermediateLayers(
-            model_object=_architectures[backbone],
+            model_object=_architectures['resnet-50'],
             input_dim=input_dim,
-            layers={
-                'conv4_block6_out':'block4',
-                'conv5_block3_out':'block5'
-            }
+            layers={'conv4_block6_out':'block4',
+                    'conv5_block3_out':'block5'}
         )
-        self.pooling = GlobalGeMPooling2D(initial_p=p, dtype='float32')
-        self.attention = Attention()
-        self.desc_fc = tf.keras.layers.Dense(global_units)
-        self.attn_fc = tf.keras.layers.Dense(n_classes)
-        self.arc_margin = ArcMarginProduct(n_classes, s=s, m=m, dtype='float32')
-        self.softmax = tf.keras.layers.Softmax(dtype='float32')
+        self.pooling = tf.keras.layers.GlobalAveragePooling2D()
+        self.desc_fc = tf.keras.layers.Dense(dense_units)
+        if margin_type == 'arcface':
+            self.margin = ArcMarginProduct(
+                n_classes=81313, s=scale, m=margin, dtype='float32')
+        else:
+            self.margin = AddMarginProduct(
+                n_classes=81313, s=scale, m=margin, dtype='float32')
 
+        self.attention = Attention()
+        self.attn_fc = tf.keras.layers.Dense(81313)
+
+        self.softmax = tf.keras.layers.Softmax(dtype='float32')
 
     def forward_prop_desc(self, images, labels, training=True):
         features = self.backbone(images, training=training)
         x = self.pooling(features['block5'])
         x = self.desc_fc(x)
-        x = self.arc_margin([x, labels])
+        x = self.margin([x, labels])
         return self.softmax(x), features['block4']
 
     def forward_prop_attn(self, features, training=True):
@@ -133,12 +136,12 @@ class Delf(tf.keras.Model):
     @property
     def get_descriptor_weights(self):
         return (self.backbone.trainable_weights+
-                self.arc_margin.trainable_weights+
+                self.margin.trainable_weights+
                 self.desc_fc.trainable_weights)
 
     @property
     def get_attention_weights(self):
-        return (self.attention.trainable_weights +
+        return (self.attention.trainable_weights+
                 self.attn_fc.trainable_weights)
 
     def call(self, inputs, training=False):

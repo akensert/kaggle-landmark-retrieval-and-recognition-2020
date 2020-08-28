@@ -1,39 +1,26 @@
 import tensorflow as tf
 import math
 
-# _policy = {
-#     'downscale':  {'range': (0.5, 1.0),  'p': 0.2},
-#     'compression':{'range': (85, 100),   'p': 0.2},
-#     'brightness': {'range': (0.8, 1.2),  'p': 0.3},
-#     'contrast':   {'range': (0.9, 1.1),  'p': 0.2},
-#     'gamma':      {'range': (0.9, 1.1),  'p': 0.2},
-#     'saturation': {'range': (0.5, 1.5),  'p': 0.3},
-#     'hue':        {'range': (0.0, 0.1),  'p': 0.2},
-#     'rotation':   {'range': (-10., 10.), 'p': 0.3},
-#     'shear':      {'range': (-10., 10.), 'p': 0.3},
-#     'scale':      {'range': (0.8, 1.2),  'p': 0.3},
-#     'shift':      {'range': (-32., 32.), 'p': 0.0},
-#     'noise':      {'range': (0., 10.),   'p': 0.2},
-#     'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.2}
-# }
-
-
 _policy = {
-    'downscale':  {'range': (0.5, 1.0),  'p': 0.0},
+    'fliplr':     {'p': 0.5},
+    'downscale':  {'range': (0.5, 1.0),  'p': 0.25},
     'compression':{'range': (85, 100),   'p': 0.0},
-    'brightness': {'range': (0.8, 1.2),  'p': 0.3},
-    'contrast':   {'range': (0.9, 1.1),  'p': 0.2},
-    'gamma':      {'range': (0.9, 1.1),  'p': 0.0},
-    'saturation': {'range': (0.5, 1.5),  'p': 0.3},
-    'hue':        {'range': (0.0, 0.1),  'p': 0.0},
-    'rotation':   {'range': (-10., 10.), 'p': 0.2},
-    'shear':      {'range': (-10., 10.), 'p': 0.3},
-    'scale':      {'range': (0.8, 1.2),  'p': 0.0},
+    'brightness': {'range': (0.8, 1.2),  'p': 0.50},
+    'contrast':   {'range': (0.9, 1.1),  'p': 0.25},
+    'gamma':      {'range': (0.9, 1.1),  'p': 0.25},
+    'saturation': {'range': (0.5, 1.5),  'p': 0.50},
+    'hue':        {'range': (0.0, 0.1),  'p': 0.45},
+    'rotation':   {'range': (-10., 10.), 'p': 0.35},
+    'shear':      {'range': (-10., 10.), 'p': 0.35},
+    'scale':      {'range': (0.8, 1.2),  'p': 0.25},
     'shift':      {'range': (-32., 32.), 'p': 0.0},
-    'noise':      {'range': (0., 10.),   'p': 0.0},
+    'noise':      {'range': (0., 10.),   'p': 0.25},
     'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.0}
 }
 
+
+def random_fliplr(image):
+    return tf.reverse(image, [1])
 
 def random_downscale(image, downscale_range=(0.5, 1.0)):
     scale = tf.random.uniform((), *downscale_range)
@@ -189,6 +176,9 @@ def random_cutout(image, num_box_range=(4, 16),
     return image
 
 def apply_random_jitter(image):
+
+    if _policy['fliplr']['p'] > tf.random.uniform(()):
+        image = random_fliplr(image)
 
     if _policy['downscale']['p'] > tf.random.uniform(()):
         image = random_downscale(image, _policy['downscale']['range'])
