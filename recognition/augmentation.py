@@ -1,20 +1,37 @@
 import tensorflow as tf
 import math
 
+# _policy = {
+#     'fliplr':     {'p': 0.5},
+#     'downscale':  {'range': (0.5, 1.0),  'p': 0.25},
+#     'compression':{'range': (85, 100),   'p': 0.0},
+#     'brightness': {'range': (0.8, 1.2),  'p': 0.50},
+#     'contrast':   {'range': (0.9, 1.1),  'p': 0.25},
+#     'gamma':      {'range': (0.9, 1.1),  'p': 0.25},
+#     'saturation': {'range': (0.5, 1.5),  'p': 0.50},
+#     'hue':        {'range': (0.0, 0.1),  'p': 0.45},
+#     'rotation':   {'range': (-10., 10.), 'p': 0.35},
+#     'shear':      {'range': (-10., 10.), 'p': 0.35},
+#     'scale':      {'range': (0.8, 1.2),  'p': 0.25},
+#     'shift':      {'range': (-32., 32.), 'p': 0.0},
+#     'noise':      {'range': (0., 10.),   'p': 0.25},
+#     'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.0}
+# }
+
 _policy = {
     'fliplr':     {'p': 0.5},
-    'downscale':  {'range': (0.5, 1.0),  'p': 0.25},
+    'downscale':  {'range': (0.75, 1.0), 'p': 0.0},
     'compression':{'range': (85, 100),   'p': 0.0},
-    'brightness': {'range': (0.8, 1.2),  'p': 0.50},
-    'contrast':   {'range': (0.9, 1.1),  'p': 0.25},
-    'gamma':      {'range': (0.9, 1.1),  'p': 0.25},
-    'saturation': {'range': (0.5, 1.5),  'p': 0.50},
-    'hue':        {'range': (0.0, 0.1),  'p': 0.45},
-    'rotation':   {'range': (-10., 10.), 'p': 0.35},
-    'shear':      {'range': (-10., 10.), 'p': 0.35},
-    'scale':      {'range': (0.8, 1.2),  'p': 0.25},
+    'brightness': {'range': (0.8, 1.2),  'p': 0.5},
+    'contrast':   {'range': (0.9, 1.1),  'p': 0.0},
+    'gamma':      {'range': (0.9, 1.1),  'p': 0.0},
+    'saturation': {'range': (0.75, 1.25),'p': 0.5},
+    'hue':        {'range': (0.0, 0.1),  'p': 0.0},
+    'rotation':   {'range': (-10., 10.), 'p': 0.0},
+    'shear':      {'range': (-10., 10.), 'p': 0.0},
+    'scale':      {'range': (0.8, 1.2),  'p': 0.0},
     'shift':      {'range': (-32., 32.), 'p': 0.0},
-    'noise':      {'range': (0., 10.),   'p': 0.25},
+    'noise':      {'range': (0., 10.),   'p': 0.0},
     'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.0}
 }
 

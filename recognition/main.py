@@ -119,32 +119,63 @@ class DistributedModel:
         clipped, _ = tf.clip_by_global_norm(gradients, clip_norm=self.clip_grad)
         self.optimizer.apply_gradients(zip(clipped, weights))
 
+    # def _train_step(self, inputs):
+    #
+    #     images, labels = inputs
+    #
+    #     with tf.GradientTape() as desc_tape, tf.GradientTape() as attn_tape:
+    #
+    #         desc_probs, intermediate_feat = self.model.forward_prop_desc(
+    #             images, labels, training=True)
+    #         # intermediate_feat = tf.stop_gradient(intermediate_feat)
+    #         attn_probs = self.model.forward_prop_attn(
+    #             intermediate_feat, training=True)
+    #
+    #         desc_loss = self._compute_loss(labels, desc_probs)
+    #         attn_loss = self._compute_loss(labels, attn_probs)
+    #
+    #         self.train_desc_loss.update_state(desc_loss)
+    #         self.train_desc_accu.update_state(labels, desc_probs)
+    #         self.train_attn_loss.update_state(attn_loss)
+    #         self.train_attn_accu.update_state(labels, attn_probs)
+    #
+    #         if self.mixed_precision:
+    #             desc_loss = self.optimizer.get_scaled_loss(desc_loss)
+    #             attn_loss = self.optimizer.get_scaled_loss(attn_loss)
+    #
+    #     self._backprop_loss(desc_tape, desc_loss, self.model.get_descriptor_weights)
+    #     self._backprop_loss(attn_tape, attn_loss, self.model.get_attention_weights)
+    #
+    #     return desc_loss, attn_loss
+
     def _train_step(self, inputs):
 
         images, labels = inputs
 
-        with tf.GradientTape() as desc_tape, tf.GradientTape() as attn_tape:
-
+        with tf.GradientTape() as desc_tape:
             desc_probs, intermediate_feat = self.model.forward_prop_desc(
                 images, labels, training=True)
+            desc_loss = self._compute_loss(labels, desc_probs)
+            self.train_desc_loss.update_state(desc_loss)
+            self.train_desc_accu.update_state(labels, desc_probs)
+
+            if self.mixed_precision:
+                desc_loss = self.optimizer.get_scaled_loss(desc_loss)
+
+        self._backprop_loss(desc_tape, desc_loss, self.model.descriptor_weights)
+
+        with tf.GradientTape() as attn_tape:
             intermediate_feat = tf.stop_gradient(intermediate_feat)
             attn_probs = self.model.forward_prop_attn(
                 intermediate_feat, training=True)
-
-            desc_loss = self._compute_loss(labels, desc_probs)
             attn_loss = self._compute_loss(labels, attn_probs)
-
-            self.train_desc_loss.update_state(desc_loss)
-            self.train_desc_accu.update_state(labels, desc_probs)
             self.train_attn_loss.update_state(attn_loss)
             self.train_attn_accu.update_state(labels, attn_probs)
 
             if self.mixed_precision:
-                desc_loss = self.optimizer.get_scaled_loss(desc_loss)
                 attn_loss = self.optimizer.get_scaled_loss(attn_loss)
 
-        self._backprop_loss(desc_tape, desc_loss, self.model.get_descriptor_weights)
-        self._backprop_loss(attn_tape, attn_loss, self.model.get_attention_weights)
+        self._backprop_loss(attn_tape, attn_loss, self.model.attention_weights)
 
         return desc_loss, attn_loss
 
@@ -209,10 +240,13 @@ def read_train_file(input_path, alpha=0.5):
     counts_map = dict(
         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
     counts = df['landmark_id'].map(counts_map)
-    df['prob'] = ((1/counts**alpha) / (1/counts**alpha).max()).astype(np.float32)
+    df['prob'] = ((1/np.log(counts)) / (1/np.log(counts)).max()).astype(np.float32)
     uniques = df['landmark_id'].unique()
     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
     return df
+
+
+
 
 train_df = read_train_file('../input/')
 
@@ -226,8 +260,12 @@ with strategy.scope():
         scale=config['loss']['scale'],
         margin=config['loss']['margin'],
         checkpoint_weights=config['checkpoint_weights'],
-        optimizer=tfa.optimizers.SGDW(
-            weight_decay=config['optimizer']['weight_decay'],
+        # optimizer=tfa.optimizers.SGDW(
+        #     weight_decay=config['optimizer']['weight_decay'],
+        #     learning_rate=config['optimizer']['learning_rate'],
+        #     momentum=config['optimizer']['momentum']),
+        optimizer=tf.keras.optimizers.SGD(
+            #weight_decay=config['optimizer']['weight_decay'],
             learning_rate=config['optimizer']['learning_rate'],
             momentum=config['optimizer']['momentum']),
         strategy=strategy,

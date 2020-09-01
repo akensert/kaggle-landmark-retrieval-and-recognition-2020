@@ -102,9 +102,9 @@ class Delf(tf.keras.Model):
         self.input_dim = input_dim
 
         self.backbone = ExtractIntermediateLayers(
-            model_object=_architectures['resnet-50'],
+            model_object=_architectures['resnet-101'],
             input_dim=input_dim,
-            layers={'conv4_block6_out':'block4',
+            layers={'conv4_block23_out':'block4',
                     'conv5_block3_out':'block5'}
         )
         self.pooling = tf.keras.layers.GlobalAveragePooling2D()
@@ -134,13 +134,13 @@ class Delf(tf.keras.Model):
         return self.softmax(x)
 
     @property
-    def get_descriptor_weights(self):
+    def descriptor_weights(self):
         return (self.backbone.trainable_weights+
                 self.margin.trainable_weights+
                 self.desc_fc.trainable_weights)
 
     @property
-    def get_attention_weights(self):
+    def attention_weights(self):
         return (self.attention.trainable_weights+
                 self.attn_fc.trainable_weights)
 
