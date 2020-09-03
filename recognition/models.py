@@ -2,24 +2,10 @@ import tensorflow as tf
 
 from layers import GlobalGeMPooling2D, ArcMarginProduct, AddMarginProduct
 
-_architectures = {
-    'efficientnet-b0':    tf.keras.applications.EfficientNetB0,
-    'efficientnet-b1':    tf.keras.applications.EfficientNetB1,
-    'efficientnet-b2':    tf.keras.applications.EfficientNetB2,
-    'efficientnet-b3':    tf.keras.applications.EfficientNetB3,
-    'efficientnet-b4':    tf.keras.applications.EfficientNetB4,
-    'efficientnet-b5':    tf.keras.applications.EfficientNetB5,
-    'efficientnet-b6':    tf.keras.applications.EfficientNetB6,
-    'efficientnet-b7':    tf.keras.applications.EfficientNetB7,
+_resnet_architectures = {
     'resnet-50':          tf.keras.applications.ResNet50,
     'resnet-101':         tf.keras.applications.ResNet101,
     'resnet-152':         tf.keras.applications.ResNet152,
-    'densenet-121':       tf.keras.applications.DenseNet121,
-    'densenet-169':       tf.keras.applications.DenseNet169,
-    'densenet-201':       tf.keras.applications.DenseNet201,
-    'inception-v3':       tf.keras.applications.InceptionV3,
-    'inceptionresnet-v2': tf.keras.applications.InceptionResNetV2,
-    'xception':           tf.keras.applications.Xception,
 }
 
 
@@ -36,7 +22,7 @@ class ExtractIntermediateLayers:
             if layer.name in layers.keys():
                 outputs[layers[layer.name]] = layer.output
         return tf.keras.Model(
-            inputs=model.input, outputs=outputs)
+            inputs=model.input, outputs=outputs, name=model.name)
 
 
 class AutoEncoder(tf.keras.Model):
@@ -101,10 +87,26 @@ class Delf(tf.keras.Model):
 
         self.input_dim = input_dim
 
+        # # ResNet50
+        # layers = {
+        #     'conv4_block6_out': 'block4',
+        #     'conv5_block3_out': 'block5'
+        # }
+        # # ResNet101
+        # layers = {
+        #     'conv4_block23_out':'block4',
+        #     'conv5_block3_out': 'block5'
+        # }
+        # # ResNet152
+        # layers = {
+        #     'conv4_block36_out':'block4',
+        #     'conv5_block3_out': 'block5'
+        # }
+
         self.backbone = ExtractIntermediateLayers(
-            model_object=_architectures['resnet-101'],
+            model_object=_resnet_architectures['resnet-50'],
             input_dim=input_dim,
-            layers={'conv4_block23_out':'block4',
+            layers={'conv4_block6_out':'block4',
                     'conv5_block3_out':'block5'}
         )
         self.pooling = tf.keras.layers.GlobalAveragePooling2D()

@@ -1,20 +1,18 @@
 
 config = {
-    'checkpoint_weights': None,#'../output/weights/model-resnet-50',
-    'save_path': '../output/weights/model-resnet-101',
-    'finetuned_weights': '../output/weights/model-resnet-101.h5',
+    'checkpoint_weights': None,#'../output/weights/resnet50.h5',
     'optimizer': {
-        'learning_rate': 1e-3,
-        'weight_decay': 1e-5,
+        'learning_rate_start': 1e-2,
+        'learning_rate_end': 1e-3,
         'momentum': 0.9,
     },
     'loss': {
-        'type': 'cosface', # arcface or cosface
+        'type': 'arcface', # arcface or cosface
         'scale': 32,
-        'margin': 0.2,
+        'margin': 0.3,
     },
-    'n_epochs': 64,
-    'batch_size': 16,
-    'input_dim': 384,
+    'n_epochs': 16,
+    'batch_size': 32,
+    'input_dim': 256,
     'dense_units': 1024,
 }

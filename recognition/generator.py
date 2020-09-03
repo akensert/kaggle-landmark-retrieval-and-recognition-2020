@@ -114,29 +114,29 @@ def create_dataset(dataframe,
                    crop_ratio,
                    apply_augmentation):
 
-    paths, labels, probs = dataframe.path, dataframe.label, dataframe.prob
+    paths, labels, weights = dataframe.path, dataframe.label, dataframe.weight
 
-    dataset = tf.data.Dataset.from_tensor_slices((paths, labels, probs))
+    dataset = tf.data.Dataset.from_tensor_slices((paths, labels, weights))
 
     if training:
-        dataset = dataset.shuffle(100_000)
+        dataset = dataset.shuffle(len(dataframe))
 
     dataset = dataset.map(
-        lambda x, y, p: (load_image(x, target_dim, central_crop, crop_ratio), y, p),
+        lambda x, y, w: (load_image(x, target_dim, central_crop, crop_ratio), y, w),
         tf.data.experimental.AUTOTUNE
     )
 
-    if training:
-        dataset = dataset.filter(filter_by_probs)
+    # if training:
+    #     dataset = dataset.filter(filter_by_probs)
 
     if apply_augmentation:
         dataset = dataset.map(
-            lambda x, y, p: (augmentation.apply_random_jitter(x), y, p),
+            lambda x, y, w: (augmentation.apply_random_jitter(x), y, w),
             tf.data.experimental.AUTOTUNE
         )
 
     dataset = dataset.map(
-        lambda x, y, p: (normalize(x), y),
+        lambda x, y, w: (normalize(x), y, w),
         tf.data.experimental.AUTOTUNE
     )
     dataset = dataset.batch(batch_size)

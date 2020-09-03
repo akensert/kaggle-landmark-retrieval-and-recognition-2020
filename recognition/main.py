@@ -4,6 +4,7 @@ What's hardcoded:
     generator.py -> normalize()
     model.py     -> Delf() -> _architectures{}
     serve.py     -> ServedModel() -> extraction.compute_receptive_boxes()
+    serve.py & main.py -> load_weights() & save_weights() respectively
 """
 
 
@@ -60,12 +61,14 @@ class DistributedModel:
     def __init__(self,
                  input_dim,
                  batch_size,
+                 learning_rate_start,
+                 learning_rate_end,
+                 learning_momentum,
                  dense_units,
                  margin_type,
                  scale,
                  margin,
                  checkpoint_weights,
-                 optimizer,
                  strategy,
                  mixed_precision):
 
@@ -77,15 +80,21 @@ class DistributedModel:
             input_dim=input_dim,
             name='DELF')
 
-        self.clip_grad = 10
         self.input_dim = input_dim
         self.batch_size = batch_size
 
         if checkpoint_weights:
             self.model.build([[None, input_dim, input_dim, 3], [None]])
-            self.model.load_weights(checkpoint_weights + '.h5')
+            self.model.load_weights(checkpoint_weights)
 
-        self.optimizer = optimizer
+
+        self.learning_rate_start = learning_rate_start
+        self.learning_rate_end = learning_rate_end
+        self.optimizer = tf.keras.optimizers.SGD(
+            learning_rate=learning_rate_start,
+            momentum=learning_momentum,
+        )
+
         self.strategy = strategy
         self.mixed_precision = mixed_precision
 
@@ -96,16 +105,17 @@ class DistributedModel:
         # metrics
         self.train_desc_loss = tf.keras.metrics.Mean()
         self.train_attn_loss = tf.keras.metrics.Mean()
-        self.train_desc_accu = tf.keras.metrics.SparseTopKCategoricalAccuracy(k=5)
-        self.train_attn_accu = tf.keras.metrics.SparseTopKCategoricalAccuracy(k=5)
+        self.train_desc_accu = tf.keras.metrics.SparseTopKCategoricalAccuracy(k=1)
+        self.train_attn_accu = tf.keras.metrics.SparseTopKCategoricalAccuracy(k=1)
 
         if self.optimizer and self.mixed_precision:
             self.optimizer = \
                 tf.keras.mixed_precision.experimental.LossScaleOptimizer(
-                    optimizer, loss_scale='dynamic')
+                    self.optimizer, loss_scale='dynamic')
 
-    def _compute_loss(self, labels, logits):
-        per_example_loss = self.loss_object(labels, logits)
+    def _compute_loss(self, labels, logits, sample_weights):
+        per_example_loss = self.loss_object(
+            labels, logits, sample_weight=sample_weights)
         return tf.nn.compute_average_loss(
             per_example_loss,
             global_batch_size=(
@@ -116,8 +126,7 @@ class DistributedModel:
         gradients = tape.gradient(loss, weights)
         if self.mixed_precision:
             gradients = self.optimizer.get_unscaled_gradients(gradients)
-        clipped, _ = tf.clip_by_global_norm(gradients, clip_norm=self.clip_grad)
-        self.optimizer.apply_gradients(zip(clipped, weights))
+        self.optimizer.apply_gradients(zip(gradients, weights))
 
     # def _train_step(self, inputs):
     #
@@ -148,14 +157,15 @@ class DistributedModel:
     #
     #     return desc_loss, attn_loss
 
+
     def _train_step(self, inputs):
 
-        images, labels = inputs
+        images, labels, sample_weights = inputs
 
         with tf.GradientTape() as desc_tape:
             desc_probs, intermediate_feat = self.model.forward_prop_desc(
                 images, labels, training=True)
-            desc_loss = self._compute_loss(labels, desc_probs)
+            desc_loss = self._compute_loss(labels, desc_probs, sample_weights)
             self.train_desc_loss.update_state(desc_loss)
             self.train_desc_accu.update_state(labels, desc_probs)
 
@@ -168,7 +178,7 @@ class DistributedModel:
             intermediate_feat = tf.stop_gradient(intermediate_feat)
             attn_probs = self.model.forward_prop_attn(
                 intermediate_feat, training=True)
-            attn_loss = self._compute_loss(labels, attn_probs)
+            attn_loss = self._compute_loss(labels, attn_probs, sample_weights)
             self.train_attn_loss.update_state(attn_loss)
             self.train_attn_accu.update_state(labels, attn_probs)
 
@@ -194,26 +204,38 @@ class DistributedModel:
             axis=None)
         )
 
-    def train(self, train_df, epochs, save_path):
+    @staticmethod
+    def cosine_decay(step, lr_start, lr_end, total_steps):
+        alpha = lr_end / lr_start
+        decay = 0.5 * (1 + math.cos(math.pi * step / total_steps))
+        decay = (1 - alpha) * decay + alpha
+        return lr_start * decay
+
+    def train(self, train_df, epochs):
+
+        train_ds = create_dataset(
+            dataframe=train_df,
+            training=True,
+            batch_size=self.batch_size,
+            target_dim=self.input_dim,
+            central_crop=False,
+            crop_ratio=(0.75, 1.0),
+            apply_augmentation=True
+        )
+
+        num_iterations = len(train_ds)
+        total_num_iterations = float(num_iterations * epochs)
+
+        train_ds = self.strategy.experimental_distribute_dataset(train_ds)
 
         for epoch in range(epochs):
-
-            train_ds = create_dataset(
-                dataframe=train_df,
-                training=True,
-                batch_size=self.batch_size,
-                target_dim=self.input_dim,
-                central_crop=False,
-                crop_ratio=(0.7, 1.0),
-                apply_augmentation=True
-            )
-
-            train_ds = self.strategy.experimental_distribute_dataset(train_ds)
-            train_ds = tqdm.tqdm(train_ds)
-            for i, inputs in enumerate(train_ds):
+            pbar = tqdm.tqdm(total=num_iterations)
+            for inputs in train_ds:
                 _, _ = self._distributed_train_step(inputs)
-                train_ds.set_description(
-                    "Loss {:.3f} {:.3f}, Acc {:.3f} {:.3f}".format(
+                pbar.update(n=1)
+                pbar.set_description(
+                    "LR {:.4f} - Loss {:.3f} {:.3f} - Acc {:.3f} {:.3f}".format(
+                        self.optimizer.learning_rate.numpy(),
                         self.train_desc_loss.result().numpy(),
                         self.train_attn_loss.result().numpy(),
                         self.train_desc_accu.result().numpy(),
@@ -221,8 +243,17 @@ class DistributedModel:
                     )
                 )
 
-            if save_path:
-                self.model.save_weights(save_path + '.h5')
+                self.optimizer.learning_rate = self.cosine_decay(
+                    step=self.optimizer.iterations.numpy()/2,
+                    lr_start=self.learning_rate_start,
+                    lr_end=self.learning_rate_end,
+                    total_steps=total_num_iterations,
+                )
+
+            pbar.close()
+
+            self.model.save_weights(
+                '../output/weights/' + self.model.backbone.name + '.h5')
 
             self.train_desc_loss.reset_states()
             self.train_attn_loss.reset_states()
@@ -230,7 +261,23 @@ class DistributedModel:
             self.train_attn_accu.reset_states()
 
 
-def read_train_file(input_path, alpha=0.5):
+
+# def read_train_file(input_path, alpha=0.5):
+#     files_paths = glob.glob(input_path + 'train/*/*/*/*')
+#     mapping = {}
+#     for path in files_paths:
+#         mapping[path.split('/')[-1].split('.')[0]] = path
+#     df = pd.read_csv(input_path + 'train.csv')
+#     df['path'] = df['id'].map(mapping)
+#     counts_map = dict(
+#         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
+#     counts = df['landmark_id'].map(counts_map)
+#     df['prob'] = ((1/np.log(counts)) / (1/np.log(counts)).max()).astype(np.float32)
+#     uniques = df['landmark_id'].unique()
+#     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
+#     return df
+
+def read_train_file(input_path):
     files_paths = glob.glob(input_path + 'train/*/*/*/*')
     mapping = {}
     for path in files_paths:
@@ -240,13 +287,13 @@ def read_train_file(input_path, alpha=0.5):
     counts_map = dict(
         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
     counts = df['landmark_id'].map(counts_map)
-    df['prob'] = ((1/np.log(counts)) / (1/np.log(counts)).max()).astype(np.float32)
     uniques = df['landmark_id'].unique()
     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
+    df['weight'] = df.label.map(dict(zip(
+            df.label.unique(),
+            np.log(np.bincount(df.label)).sum() / (df.label.nunique() * np.log(np.bincount(df.label)))
+    )))
     return df
-
-
-
 
 train_df = read_train_file('../input/')
 
@@ -255,23 +302,15 @@ with strategy.scope():
     dist_model = DistributedModel(
         input_dim=config['input_dim'],
         batch_size=config['batch_size'],
+        learning_rate_start=config['optimizer']['learning_rate_start'],
+        learning_rate_end=config['optimizer']['learning_rate_end'],
+        learning_momentum=config['optimizer']['momentum'],
         dense_units=config['dense_units'],
         margin_type=config['loss']['type'],
         scale=config['loss']['scale'],
         margin=config['loss']['margin'],
         checkpoint_weights=config['checkpoint_weights'],
-        # optimizer=tfa.optimizers.SGDW(
-        #     weight_decay=config['optimizer']['weight_decay'],
-        #     learning_rate=config['optimizer']['learning_rate'],
-        #     momentum=config['optimizer']['momentum']),
-        optimizer=tf.keras.optimizers.SGD(
-            #weight_decay=config['optimizer']['weight_decay'],
-            learning_rate=config['optimizer']['learning_rate'],
-            momentum=config['optimizer']['momentum']),
         strategy=strategy,
         mixed_precision=mixed_precision)
 
-    dist_model.train(
-        train_df=train_df,
-        epochs=config['n_epochs'],
-        save_path=config['save_path'])
+    dist_model.train(train_df=train_df, epochs=config['n_epochs'])

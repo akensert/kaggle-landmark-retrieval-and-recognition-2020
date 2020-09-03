@@ -11,7 +11,6 @@ import extraction
 class ServedModel(models.Delf):
 
     def __init__(self,
-                 weights,
                  dense_units,
                  margin_type,
                  scale,
@@ -28,7 +27,7 @@ class ServedModel(models.Delf):
             tf.ones((1,), dtype='int32'),
         ])
         # load finetuned delf weights
-        self.load_weights(weights)
+        self.load_weights('../output/weights/' + self.backbone.name + '.h5')
 
     @tf.function(
         input_signature=[
@@ -132,7 +131,7 @@ class ServedModel(models.Delf):
         # Generate local descriptor (with keypoint centers)
         _, attention_probs, _ = self.attention(block4, training=False)
         rf_boxes = extraction.compute_receptive_boxes(
-            *block4[0].shape[:2], rf=291.0, stride=16, padding=143.0)
+            *block4[0].shape[:2], rf=835.0, stride=16, padding=415.0)
         boxes, local_desc, scores = extraction.select_local_features(
             attention_probs=attention_probs,
             features=block4,
@@ -169,7 +168,6 @@ if __name__ == '__main__':
     tf.config.set_visible_devices([], 'GPU')
 
     model = ServedModel(
-        config.config['finetuned_weights'],
         config.config['dense_units'],
         config.config['loss']['type'],
         config.config['loss']['scale'],
