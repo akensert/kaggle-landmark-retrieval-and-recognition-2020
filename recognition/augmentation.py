@@ -19,19 +19,19 @@ import math
 # }
 
 _policy = {
-    'fliplr':     {'p': 0.0},
-    'downscale':  {'range': (0.75, 1.0), 'p': 0.0},
-    'compression':{'range': (85, 100),   'p': 0.0},
+    'fliplr':     {'p': 0.5},
+    'downscale':  {'range': (0.75, 1.0), 'p': 0.2},
+    'compression':{'range': (85, 100),   'p': 0.2},
     'brightness': {'range': (0.8, 1.2),  'p': 0.5},
-    'contrast':   {'range': (0.9, 1.1),  'p': 0.5},
-    'gamma':      {'range': (0.9, 1.1),  'p': 0.0},
-    'saturation': {'range': (0.75, 1.75),'p': 0.5},
-    'hue':        {'range': (0.0, 0.1),  'p': 0.0},
-    'rotation':   {'range': (-10., 10.), 'p': 0.5},
-    'shear':      {'range': (-10., 10.), 'p': 0.5},
-    'scale':      {'range': (0.8, 1.2),  'p': 0.5},
+    'contrast':   {'range': (0.9, 1.1),  'p': 0.2},
+    'gamma':      {'range': (0.9, 1.1),  'p': 0.1},
+    'saturation': {'range': (0.75, 1.25),'p': 0.2},
+    'hue':        {'range': (0.0, 0.1),  'p': 0.2},
+    'rotation':   {'range': (-10., 10.), 'p': 0.3},
+    'shear':      {'range': (-10., 10.), 'p': 0.3},
+    'scale':      {'range': (0.8, 1.2),  'p': 0.0},
     'shift':      {'range': (-32., 32.), 'p': 0.0},
-    'noise':      {'range': (0., 10.),   'p': 0.0},
+    'noise':      {'range': (0., 10.),   'p': 0.2},
     'cutout':     {'range': (4, 16), 'size': (32, 33), 'p': 0.0}
 }
 

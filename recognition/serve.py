@@ -83,8 +83,10 @@ class ServedModel(models.Delf):
         features = self.backbone(image, training=False)['block4']
         _, attention_probs, _ = self.attention(features, training=False)
         # resnet152: 1315, 16, 655
+        # resnet101: 835,  16, 415,
+        # resnet50:  291,  16, 143
         rf_boxes = extraction.compute_receptive_boxes(
-            *features[0].shape[:2], rf=835.0, stride=16, padding=415.0)
+            *features[0].shape[:2], rf=291.0, stride=16, padding=143.0)
         boxes, feats, scores = extraction.select_local_features(
             attention_probs=attention_probs,
             features=features,
@@ -103,7 +105,7 @@ class ServedModel(models.Delf):
     def extract_local_prediction(self, image):
         features = self.backbone(image, training=False)['block4']
         return tf.squeeze(
-            self.forward_prop_attn(features, training=False))
+            self.forward_prop_attn(features, -1, training=False))
 
     @tf.function(
         input_signature=[

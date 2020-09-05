@@ -47,7 +47,7 @@ class Attention(tf.keras.Model):
             kernel_regularizer=tf.keras.regularizers.l2(decay),
             padding='same',
             name='attention/conv2d_1')
-        self.bn_conv2d_1 = tf.keras.layers.experimental.SyncBatchNormalization(
+        self.bn_conv2d_1 = tf.keras.layers.BatchNormalization(
             axis=3, name='attention/bn_conv2d_1')
         self.relu_conv2d_1 = tf.keras.layers.Activation('relu')
 
@@ -112,14 +112,19 @@ class Delf(tf.keras.Model):
         self.pooling = tf.keras.layers.GlobalAveragePooling2D()
         self.desc_fc = tf.keras.layers.Dense(dense_units)
         if margin_type == 'arcface':
-            self.margin = ArcMarginProduct(
+            self.desc_margin = ArcMarginProduct(
                 n_classes=81313, s=scale, m=margin, dtype='float32')
+            self.attn_margin = ArcMarginProduct(
+                n_classes=81313, s=scale, m=margin, dtype='float32')
+
         else:
-            self.margin = AddMarginProduct(
+            self.desc_margin = AddMarginProduct(
+                n_classes=81313, s=scale, m=margin, dtype='float32')
+            self.attn_margin = AddMarginProduct(
                 n_classes=81313, s=scale, m=margin, dtype='float32')
 
         self.attention = Attention()
-        self.attn_fc = tf.keras.layers.Dense(81313)
+        self.attn_fc = tf.keras.layers.Dense(dense_units)
 
         self.softmax = tf.keras.layers.Softmax(dtype='float32')
 
@@ -127,23 +132,25 @@ class Delf(tf.keras.Model):
         features = self.backbone(images, training=training)
         x = self.pooling(features['block5'])
         x = self.desc_fc(x)
-        x = self.margin([x, labels])
+        x = self.desc_margin([x, labels])
         return self.softmax(x), features['block4']
 
-    def forward_prop_attn(self, features, training=True):
+    def forward_prop_attn(self, features, labels, training=True):
         x, _, _ = self.attention(features, training=training)
         x = self.attn_fc(x)
+        x = self.attn_margin([x, labels])
         return self.softmax(x)
 
     @property
     def descriptor_weights(self):
         return (self.backbone.trainable_weights+
-                self.margin.trainable_weights+
+                self.desc_margin.trainable_weights+
                 self.desc_fc.trainable_weights)
 
     @property
     def attention_weights(self):
         return (self.attention.trainable_weights+
+                self.attn_margin.trainable_weights+
                 self.attn_fc.trainable_weights)
 
     def call(self, inputs, training=False):
@@ -152,5 +159,5 @@ class Delf(tf.keras.Model):
         is used for model.build(...)-->model.load_weights(...) only.
         '''
         out1, block4 = self.forward_prop_desc(*inputs, training=training)
-        out2 = self.forward_prop_attn(block4, training=training)
+        out2 = self.forward_prop_attn(block4, inputs[1], training=training)
         return (out1, out2)

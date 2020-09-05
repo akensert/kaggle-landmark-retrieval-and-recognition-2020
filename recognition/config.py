@@ -1,17 +1,17 @@
 
 config = {
-    'checkpoint_weights': None,#'../output/weights/resnet50.h5',
+    'checkpoint_weights': False,
     'optimizer': {
-        'learning_rate_start': 1e-2,
-        'learning_rate_end': 1e-3,
+        'learning_rate_start': 1e-3,
+        'learning_rate_end': 1e-4,
         'momentum': 0.9,
     },
     'loss': {
-        'type': 'arcface', # arcface or cosface
+        'type': 'cosface', # arcface or cosface
         'scale': 32,
         'margin': 0.3,
     },
-    'n_epochs': 16,
+    'n_epochs': 64,
     'batch_size': 32,
     'input_dim': 256,
     'dense_units': 1024,

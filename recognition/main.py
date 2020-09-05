@@ -5,6 +5,9 @@ What's hardcoded:
     model.py     -> Delf() -> _architectures{}
     serve.py     -> ServedModel() -> extraction.compute_receptive_boxes()
     serve.py & main.py -> load_weights() & save_weights() respectively
+
+    FIX:
+        serve.py label input to prediction functions
 """
 
 
@@ -85,7 +88,8 @@ class DistributedModel:
 
         if checkpoint_weights:
             self.model.build([[None, input_dim, input_dim, 3], [None]])
-            self.model.load_weights(checkpoint_weights)
+            self.model.load_weights(
+                '../output/weights/' + self.model.backbone.name + '.h5')
 
 
         self.learning_rate_start = learning_rate_start
@@ -114,8 +118,7 @@ class DistributedModel:
                     self.optimizer, loss_scale='dynamic')
 
     def _compute_loss(self, labels, logits, sample_weights):
-        per_example_loss = self.loss_object(
-            labels, logits, sample_weight=sample_weights)
+        per_example_loss = self.loss_object(labels, logits)
         return tf.nn.compute_average_loss(
             per_example_loss,
             global_batch_size=(
@@ -177,7 +180,7 @@ class DistributedModel:
         with tf.GradientTape() as attn_tape:
             intermediate_feat = tf.stop_gradient(intermediate_feat)
             attn_probs = self.model.forward_prop_attn(
-                intermediate_feat, training=True)
+                intermediate_feat, labels, training=True)
             attn_loss = self._compute_loss(labels, attn_probs, sample_weights)
             self.train_attn_loss.update_state(attn_loss)
             self.train_attn_accu.update_state(labels, attn_probs)
@@ -219,11 +222,11 @@ class DistributedModel:
             batch_size=self.batch_size,
             target_dim=self.input_dim,
             central_crop=False,
-            crop_ratio=(0.75, 1.0),
+            crop_ratio=(0.7, 1.0),
             apply_augmentation=True
         )
 
-        num_iterations = len(train_ds)
+        num_iterations = 400_000//self.batch_size#len(train_ds) // 4
         total_num_iterations = float(num_iterations * epochs)
 
         train_ds = self.strategy.experimental_distribute_dataset(train_ds)
@@ -262,22 +265,7 @@ class DistributedModel:
 
 
 
-# def read_train_file(input_path, alpha=0.5):
-#     files_paths = glob.glob(input_path + 'train/*/*/*/*')
-#     mapping = {}
-#     for path in files_paths:
-#         mapping[path.split('/')[-1].split('.')[0]] = path
-#     df = pd.read_csv(input_path + 'train.csv')
-#     df['path'] = df['id'].map(mapping)
-#     counts_map = dict(
-#         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
-#     counts = df['landmark_id'].map(counts_map)
-#     df['prob'] = ((1/np.log(counts)) / (1/np.log(counts)).max()).astype(np.float32)
-#     uniques = df['landmark_id'].unique()
-#     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
-#     return df
-
-def read_train_file(input_path):
+def read_train_file(input_path, alpha=0.5):
     files_paths = glob.glob(input_path + 'train/*/*/*/*')
     mapping = {}
     for path in files_paths:
@@ -287,13 +275,28 @@ def read_train_file(input_path):
     counts_map = dict(
         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
     counts = df['landmark_id'].map(counts_map)
+    df['prob'] = ((1/np.sqrt(counts)) / (1/np.sqrt(counts)).max()).astype(np.float32)
     uniques = df['landmark_id'].unique()
     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
-    df['weight'] = df.label.map(dict(zip(
-            df.label.unique(),
-            np.log(np.bincount(df.label)).sum() / (df.label.nunique() * np.log(np.bincount(df.label)))
-    )))
     return df
+
+# def read_train_file(input_path):
+#     files_paths = glob.glob(input_path + 'train/*/*/*/*')
+#     mapping = {}
+#     for path in files_paths:
+#         mapping[path.split('/')[-1].split('.')[0]] = path
+#     df = pd.read_csv(input_path + 'train.csv')
+#     df['path'] = df['id'].map(mapping)
+#     counts_map = dict(
+#         df.groupby('landmark_id')['path'].agg(lambda x: len(x)))
+#     counts = df['landmark_id'].map(counts_map)
+#     uniques = df['landmark_id'].unique()
+#     df['label'] = df['landmark_id'].map(dict(zip(uniques, range(len(uniques)))))
+#     df['weight'] = df.label.map(dict(zip(
+#             df.label.unique(),
+#             np.log(np.bincount(df.label)).sum() / (df.label.nunique() * np.log(np.bincount(df.label)))
+#     )))
+#     return df
 
 train_df = read_train_file('../input/')
 

@@ -47,7 +47,6 @@ def load_image(image_path, dim, central_crop, crop_ratio):
 
     shape = tf.shape(image)[:-1]
 
-
     if central_crop:
         if shape[0] > shape[1]:
             offset_height = (shape[0]-shape[1])//2
@@ -98,11 +97,11 @@ def load_image(image_path, dim, central_crop, crop_ratio):
         )
 
 def normalize(image):
-    return tf.keras.applications.resnet.preprocess_input(
-        tf.cast(image, tf.float32))
+    image = tf.cast(image, dtype=tf.float32) / 255.
+    return image
 
-def filter_by_probs(x, y, p):
-    if p > tf.random.uniform((), 0, 1):
+def filter_by_probs(x, y, w):
+    if w > tf.random.uniform((), 0, 1):
         return True
     return False
 
@@ -114,7 +113,7 @@ def create_dataset(dataframe,
                    crop_ratio,
                    apply_augmentation):
 
-    paths, labels, weights = dataframe.path, dataframe.label, dataframe.weight
+    paths, labels, weights = dataframe.path, dataframe.label, dataframe.prob
 
     dataset = tf.data.Dataset.from_tensor_slices((paths, labels, weights))
 
@@ -126,8 +125,8 @@ def create_dataset(dataframe,
         tf.data.experimental.AUTOTUNE
     )
 
-    # if training:
-    #     dataset = dataset.filter(filter_by_probs)
+    if training:
+        dataset = dataset.filter(filter_by_probs)
 
     if apply_augmentation:
         dataset = dataset.map(
