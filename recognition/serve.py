@@ -70,6 +70,22 @@ class ServedModel(models.Delf):
     @tf.function(
         input_signature=[
             tf.TensorSpec([1, None, None, 3], tf.float32),
+            tf.TensorSpec([], tf.bool)])
+    def extract_global_descriptor_and_prediction(self, image, l2_norm):
+        features = self.backbone(image, training=False)
+        x1 = self.pooling(features['block5'])
+        x1 = self.desc_fc(x1)
+        if l2_norm:
+            x2 = tf.nn.l2_normalize(x1, axis=1)
+        else:
+            x2 = tf.identity(x1)
+        x1 = self.desc_margin([x1, -1])
+        return tf.squeeze(x2), tf.squeeze(self.softmax(x1))
+
+
+    @tf.function(
+        input_signature=[
+            tf.TensorSpec([1, None, None, 3], tf.float32),
             tf.TensorSpec([], tf.bool),
             tf.TensorSpec([], tf.float32),
             tf.TensorSpec([], tf.int32),
@@ -132,6 +148,9 @@ class ServedModel(models.Delf):
 
         # Generate local descriptor (with keypoint centers)
         _, attention_probs, _ = self.attention(block4, training=False)
+        # resnet152: 1315, 16, 655
+        # resnet101: 835,  16, 415,
+        # resnet50:  291,  16, 143
         rf_boxes = extraction.compute_receptive_boxes(
             *block4[0].shape[:2], rf=835.0, stride=16, padding=415.0)
         boxes, local_desc, scores = extraction.select_local_features(

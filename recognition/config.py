@@ -1,8 +1,8 @@
 
 config = {
-    'checkpoint_weights': False,
+    'checkpoint_weights': True,
     'optimizer': {
-        'learning_rate_start': 1e-3,
+        'learning_rate_start': 1e-4,
         'learning_rate_end': 1e-4,
         'momentum': 0.9,
     },
@@ -12,7 +12,7 @@ config = {
         'margin': 0.3,
     },
     'n_epochs': 64,
-    'batch_size': 32,
-    'input_dim': 256,
+    'batch_size': 24,
+    'input_dim': 384,
     'dense_units': 1024,
 }

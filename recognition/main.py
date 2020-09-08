@@ -59,6 +59,43 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
+class SparseGlobalAveragePrecision(tf.keras.metrics.Metric):
+    '''
+    A variant of the [original] Global Average Precision metric here:
+    https://www.kaggle.com/c/landmark-recognition-2020/overview/evaluation
+    '''
+    def __init__(self, name='global_average_precision', **kwargs):
+        super(SparseGlobalAveragePrecision, self).__init__(name=name, **kwargs)
+        self.gap = self.add_weight(
+            name='gap', initializer='zeros', dtype=tf.float32)
+        self.count = self.add_weight(
+            name='count', initializer='ones', dtype=tf.float32)
+
+    def update_state(self, y_true, y_pred):
+        y_true = tf.one_hot(y_true, 81313)
+        y_pred = tf.argmax(y_pred, axis=-1)
+        y_true = tf.argmax(y_true, axis=-1) * tf.cast(
+            tf.reduce_sum(y_true, axis=-1), tf.int64)
+        n_pred = tf.shape(y_pred)[0]
+        is_correct = tf.cast(tf.equal(y_pred, y_true), tf.float32)
+        self.gap.assign_add(
+            tf.reduce_mean(
+                tf.cumsum(is_correct) * is_correct / tf.cast(
+                    tf.range(1, n_pred + 1), dtype=tf.float32)
+            )
+        )
+        self.count.assign_add(tf.constant(1, dtype=tf.float32))
+
+    def result(self):
+        return self.gap / self.count
+
+    def reset_states(self):
+        self.gap = self.add_weight(
+            name='gap', initializer='zeros', dtype=tf.float32)
+        self.count = self.add_weight(
+            name='count', initializer='ones', dtype=tf.float32)
+
+
 class DistributedModel:
 
     def __init__(self,
@@ -111,6 +148,8 @@ class DistributedModel:
         self.train_attn_loss = tf.keras.metrics.Mean()
         self.train_desc_accu = tf.keras.metrics.SparseTopKCategoricalAccuracy(k=1)
         self.train_attn_accu = tf.keras.metrics.SparseTopKCategoricalAccuracy(k=1)
+        #self.train_desc_gap  = SparseGlobalAveragePrecision()
+        #self.train_attn_gap  = SparseGlobalAveragePrecision()
 
         if self.optimizer and self.mixed_precision:
             self.optimizer = \
@@ -131,36 +170,6 @@ class DistributedModel:
             gradients = self.optimizer.get_unscaled_gradients(gradients)
         self.optimizer.apply_gradients(zip(gradients, weights))
 
-    # def _train_step(self, inputs):
-    #
-    #     images, labels = inputs
-    #
-    #     with tf.GradientTape() as desc_tape, tf.GradientTape() as attn_tape:
-    #
-    #         desc_probs, intermediate_feat = self.model.forward_prop_desc(
-    #             images, labels, training=True)
-    #         # intermediate_feat = tf.stop_gradient(intermediate_feat)
-    #         attn_probs = self.model.forward_prop_attn(
-    #             intermediate_feat, training=True)
-    #
-    #         desc_loss = self._compute_loss(labels, desc_probs)
-    #         attn_loss = self._compute_loss(labels, attn_probs)
-    #
-    #         self.train_desc_loss.update_state(desc_loss)
-    #         self.train_desc_accu.update_state(labels, desc_probs)
-    #         self.train_attn_loss.update_state(attn_loss)
-    #         self.train_attn_accu.update_state(labels, attn_probs)
-    #
-    #         if self.mixed_precision:
-    #             desc_loss = self.optimizer.get_scaled_loss(desc_loss)
-    #             attn_loss = self.optimizer.get_scaled_loss(attn_loss)
-    #
-    #     self._backprop_loss(desc_tape, desc_loss, self.model.get_descriptor_weights)
-    #     self._backprop_loss(attn_tape, attn_loss, self.model.get_attention_weights)
-    #
-    #     return desc_loss, attn_loss
-
-
     def _train_step(self, inputs):
 
         images, labels, sample_weights = inputs
@@ -171,6 +180,7 @@ class DistributedModel:
             desc_loss = self._compute_loss(labels, desc_probs, sample_weights)
             self.train_desc_loss.update_state(desc_loss)
             self.train_desc_accu.update_state(labels, desc_probs)
+            #self.train_desc_gap.update_state(labels, desc_probs)
 
             if self.mixed_precision:
                 desc_loss = self.optimizer.get_scaled_loss(desc_loss)
@@ -184,6 +194,7 @@ class DistributedModel:
             attn_loss = self._compute_loss(labels, attn_probs, sample_weights)
             self.train_attn_loss.update_state(attn_loss)
             self.train_attn_accu.update_state(labels, attn_probs)
+            #self.train_attn_gap.update_state(labels, attn_probs)
 
             if self.mixed_precision:
                 attn_loss = self.optimizer.get_scaled_loss(attn_loss)
@@ -237,12 +248,14 @@ class DistributedModel:
                 _, _ = self._distributed_train_step(inputs)
                 pbar.update(n=1)
                 pbar.set_description(
-                    "LR {:.4f} - Loss {:.3f} {:.3f} - Acc {:.3f} {:.3f}".format(
-                        self.optimizer.learning_rate.numpy(),
+                        "L:{:.3f}/{:.3f}--A:{:.3f}/{:.3f}".format(
+                        # self.optimizer.learning_rate.numpy(),
                         self.train_desc_loss.result().numpy(),
                         self.train_attn_loss.result().numpy(),
                         self.train_desc_accu.result().numpy(),
                         self.train_attn_accu.result().numpy(),
+                        #self.train_desc_gap.result().numpy(),
+                        #self.train_attn_gap.result().numpy(),
                     )
                 )
 
@@ -262,7 +275,8 @@ class DistributedModel:
             self.train_attn_loss.reset_states()
             self.train_desc_accu.reset_states()
             self.train_attn_accu.reset_states()
-
+            # self.train_desc_gap.reset_states()
+            # self.train_attn_gap.reset_states()
 
 
 def read_train_file(input_path, alpha=0.5):
