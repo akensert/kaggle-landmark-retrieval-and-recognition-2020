@@ -87,29 +87,33 @@ class ServedModel(models.Delf):
         input_signature=[
             tf.TensorSpec([1, None, None, 3], tf.float32),
             tf.TensorSpec([], tf.bool),
+            tf.TensorSpec([], tf.bool),
             tf.TensorSpec([], tf.float32),
-            tf.TensorSpec([], tf.int32),
-            tf.TensorSpec([], tf.float32)])
+            tf.TensorSpec([], tf.int32)])
     def extract_local_descriptor(self,
                                  image,
                                  l2_norm,
+                                 use_rf_boxes,
                                  attention_threshold,
-                                 nms_max_feature_num,
-                                 nms_iou_threshold):
+                                 max_num_features):
         features = self.backbone(image, training=False)['block4']
         _, attention_probs, _ = self.attention(features, training=False)
         # resnet152: 1315, 16, 655
         # resnet101: 835,  16, 415,
         # resnet50:  291,  16, 143
-        rf_boxes = extraction.compute_receptive_boxes(
-            *features[0].shape[:2], rf=291.0, stride=16, padding=143.0)
+        if use_rf_boxes:
+            # current only have rf + stride + padding for resnet50/101/152
+            boxes = extraction.compute_receptive_boxes(
+                *features[0].shape[:2], rf=1315.0, stride=16, padding=655.0)
+        else:
+            boxes = extraction.compute_boxes(*features[0].shape[:2])
+
         boxes, feats, scores = extraction.select_local_features(
             attention_probs=attention_probs,
             features=features,
-            rf_boxes=rf_boxes,
+            boxes=boxes,
             attention_threshold=attention_threshold,
-            nms_max_feature_num=nms_max_feature_num,
-            nms_iou_threshold=nms_iou_threshold)
+            max_num_features=max_num_features)
         if l2_norm:
             feats = tf.nn.l2_normalize(feats, axis=1)
         points = extraction.compute_keypoint_centers(boxes)
@@ -122,48 +126,6 @@ class ServedModel(models.Delf):
         features = self.backbone(image, training=False)['block4']
         return tf.squeeze(
             self.forward_prop_attn(features, -1, training=False))
-
-    @tf.function(
-        input_signature=[
-            tf.TensorSpec([1, None, None, 3], tf.float32),
-            tf.TensorSpec([], tf.bool),
-            tf.TensorSpec([], tf.float32),
-            tf.TensorSpec([], tf.int32),
-            tf.TensorSpec([], tf.float32)])
-    def extract_global_and_local_descriptor(self,
-                                            image,
-                                            l2_norm,
-                                            attention_threshold,
-                                            nms_max_feature_num,
-                                            nms_iou_threshold):
-        # Pass image through backbone (obtain two conv-blocks)
-        features = self.backbone(image, training=False)
-        block5, block4 = features['block5'], features['block4']
-        # Generate global descriptor
-        global_desc = self.pooling(block5)
-        global_desc = self.desc_fc(global_desc)
-        global_desc = tf.squeeze(global_desc, axis=0)
-        if l2_norm:
-            global_desc = tf.nn.l2_normalize(global_desc)
-
-        # Generate local descriptor (with keypoint centers)
-        _, attention_probs, _ = self.attention(block4, training=False)
-        # resnet152: 1315, 16, 655
-        # resnet101: 835,  16, 415,
-        # resnet50:  291,  16, 143
-        rf_boxes = extraction.compute_receptive_boxes(
-            *block4[0].shape[:2], rf=835.0, stride=16, padding=415.0)
-        boxes, local_desc, scores = extraction.select_local_features(
-            attention_probs=attention_probs,
-            features=block4,
-            rf_boxes=rf_boxes,
-            attention_threshold=attention_threshold,
-            nms_max_feature_num=nms_max_feature_num,
-            nms_iou_threshold=nms_iou_threshold)
-        if l2_norm:
-            local_desc = tf.nn.l2_normalize(local_desc, axis=1)
-        points = extraction.compute_keypoint_centers(boxes)
-        return global_desc, (local_desc, points)
 
     def save(self, path, and_zip=True):
         # save model

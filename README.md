@@ -6,4 +6,4 @@ Datasets can be found [here](https://www.kaggle.com/c/landmark-retrieval-2020/da
 ##### Retrieval
 Navigate into `retrieval/scripts/` and run from terminal: `python modify_trainfile.py`. This only has to be run once, but may take an hour to run. After it has finished, navigate outside the `retrieval/scripts/` folder (`../`) and run from terminal: `python main.py`. `main.py` will train the model according to `config_1` in `config.py`. When the training is done (which will take a couple of days on an RTX 20XX GPU card), run `python served_model.py` to save the model for later use.
 ##### Recoginition
-Work in progress
+Navigate to `recognition/` and run `python main.py`. To serve trained model, run `python serve.py`. Test out local feature matching from `local_feature_matching.ipynb`.

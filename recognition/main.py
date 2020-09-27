@@ -141,7 +141,8 @@ class DistributedModel:
 
         # loss function
         self.loss_object = tf.keras.losses.SparseCategoricalCrossentropy(
-            from_logits=False, reduction=tf.keras.losses.Reduction.NONE)
+            from_logits=False,
+            reduction=tf.keras.losses.Reduction.NONE)
 
         # metrics
         self.train_desc_loss = tf.keras.metrics.Mean()
@@ -157,12 +158,12 @@ class DistributedModel:
                     self.optimizer, loss_scale='dynamic')
 
     def _compute_loss(self, labels, logits, sample_weights):
+        #labels = tf.one_hot(labels, 81313)
         per_example_loss = self.loss_object(labels, logits)
         return tf.nn.compute_average_loss(
             per_example_loss,
-            global_batch_size=(
-                self.batch_size * self.strategy.num_replicas_in_sync)
-            )
+            global_batch_size=self.batch_size
+        )
 
     def _backprop_loss(self, tape, loss, weights):
         gradients = tape.gradient(loss, weights)

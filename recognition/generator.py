@@ -24,7 +24,23 @@ def load_image(image_path, dim, central_crop, crop_ratio):
 
     '''
 
-    def random_truncated_normal_offset(max_offset, min_offset):
+    def random_truncated_normal_crop_ratio(min_crop_ratio, max_crop_ratio):
+        '''
+        Computes the crop_ratio between min_crop_ratio and max_crop_ratio ---
+        with increasing probability (ending up with a ratio close to
+        max_crop_ratio is much more likely than a ratio close to min_crop_ratio).
+        The probability distribution is a truncated "left half" of a normal
+        distribution; with stddev=max_crop_ratio/8 the distribution almost
+        looks like a right triangle.
+        '''
+        _ = tf.constant(-1, dtype='float32')
+        crop_ratio = tf.while_loop(
+            cond=lambda x: x<min_crop_ratio or x>max_crop_ratio,
+            body=lambda x: tf.random.normal((), max_crop_ratio, max_crop_ratio/8),
+            loop_vars=[_])
+        return crop_ratio[0]
+
+    def random_truncated_normal_offset(min_offset, max_offset):
         '''
         Computes random offset for the cropping of an image, according
         to a truncated normal distribution.
@@ -73,14 +89,14 @@ def load_image(image_path, dim, central_crop, crop_ratio):
     min_dim = tf.reduce_min(shape)
     crop_size = (
         tf.cast(min_dim, 'float32')
-        * tf.random.uniform((), crop_ratio[0], crop_ratio[1])
+        * random_truncated_normal_crop_ratio(crop_ratio[0], crop_ratio[1])
     )
     y_max_offset = tf.cast(shape[0], dtype='float32')-crop_size
     x_max_offset = tf.cast(shape[1], dtype='float32')-crop_size
     min_offset = tf.constant(0, dtype='float32')
 
-    offset_height = random_truncated_normal_offset(y_max_offset, min_offset)
-    offset_width = random_truncated_normal_offset(x_max_offset, min_offset)
+    offset_height = random_truncated_normal_offset(min_offset, y_max_offset)
+    offset_width = random_truncated_normal_offset(min_offset, x_max_offset)
     target_height = target_width = tf.cast(crop_size, dtype='int32')
 
     image_cropped = tf.image.crop_to_bounding_box(

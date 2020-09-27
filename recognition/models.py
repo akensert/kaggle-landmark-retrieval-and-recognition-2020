@@ -2,10 +2,30 @@ import tensorflow as tf
 
 from layers import GlobalGeMPooling2D, ArcMarginProduct, AddMarginProduct
 
-_resnet_architectures = {
+# _resnet_architectures = {
+#     'resnet-50':          tf.keras.applications.ResNet50,
+#     'resnet-101':         tf.keras.applications.ResNet101,
+#     'resnet-152':         tf.keras.applications.ResNet152,
+# }
+
+_cnn_architectures = {
+    'efficientnet-b0':    tf.keras.applications.EfficientNetB0,
+    'efficientnet-b1':    tf.keras.applications.EfficientNetB1,
+    'efficientnet-b2':    tf.keras.applications.EfficientNetB2,
+    'efficientnet-b3':    tf.keras.applications.EfficientNetB3,
+    'efficientnet-b4':    tf.keras.applications.EfficientNetB4,
+    'efficientnet-b5':    tf.keras.applications.EfficientNetB5,
+    'efficientnet-b6':    tf.keras.applications.EfficientNetB6,
+    'efficientnet-b7':    tf.keras.applications.EfficientNetB7,
     'resnet-50':          tf.keras.applications.ResNet50,
     'resnet-101':         tf.keras.applications.ResNet101,
     'resnet-152':         tf.keras.applications.ResNet152,
+    'densenet-121':       tf.keras.applications.DenseNet121,
+    'densenet-169':       tf.keras.applications.DenseNet169,
+    'densenet-201':       tf.keras.applications.DenseNet201,
+    'inception-v3':       tf.keras.applications.InceptionV3,
+    'inceptionresnet-v2': tf.keras.applications.InceptionResNetV2,
+    'xception':           tf.keras.applications.Xception,
 }
 
 
@@ -38,7 +58,7 @@ class AutoEncoder(tf.keras.Model):
 
 class Attention(tf.keras.Model):
 
-    def __init__(self, decay=1e-4, **kwargs):
+    def __init__(self, decay=1e-7, **kwargs):
         super(Attention, self).__init__(**kwargs)
 
         self.conv2d_1 = tf.keras.layers.Conv2D(
@@ -102,56 +122,67 @@ class Delf(tf.keras.Model):
         #     'conv4_block36_out':'block4',
         #     'conv5_block3_out': 'block5'
         # }
+        # block5a_expand_activation
 
         self.backbone = ExtractIntermediateLayers(
-            model_object=_resnet_architectures['resnet-50'],
+            model_object=_cnn_architectures['resnet-152'],
             input_dim=input_dim,
-            layers={'conv4_block6_out':'block4',
-                    'conv5_block3_out':'block5'}
+            layers={'conv4_block36_out':'block4',
+                    'conv5_block3_out': 'block5'}
         )
         self.pooling = tf.keras.layers.GlobalAveragePooling2D()
+        self.desc_drop = tf.keras.layers.Dropout(0.2)
         self.desc_fc = tf.keras.layers.Dense(dense_units)
+
         if margin_type == 'arcface':
             self.desc_margin = ArcMarginProduct(
                 n_classes=81313, s=scale, m=margin, dtype='float32')
-            self.attn_margin = ArcMarginProduct(
-                n_classes=81313, s=scale, m=margin, dtype='float32')
+            # self.attn_margin = ArcMarginProduct(
+            #   n_classes=81313, s=scale, m=0.2, dtype='float32')
 
         else:
             self.desc_margin = AddMarginProduct(
                 n_classes=81313, s=scale, m=margin, dtype='float32')
-            self.attn_margin = AddMarginProduct(
-                n_classes=81313, s=scale, m=margin, dtype='float32')
+            # self.attn_margin = AddMarginProduct(
+            #   n_classes=81313, s=scale, m=0.2, dtype='float32')
 
         self.attention = Attention()
-        self.attn_fc = tf.keras.layers.Dense(dense_units)
+        self.attn_drop = tf.keras.layers.Dropout(0.2)
+        #self.attn_fc = tf.keras.layers.Dense(dense_units)
+        self.attn_fc = tf.keras.layers.Dense(81313)
 
         self.softmax = tf.keras.layers.Softmax(dtype='float32')
 
     def forward_prop_desc(self, images, labels, training=True):
         features = self.backbone(images, training=training)
         x = self.pooling(features['block5'])
+        x = self.desc_drop(x)
         x = self.desc_fc(x)
         x = self.desc_margin([x, labels])
         return self.softmax(x), features['block4']
 
     def forward_prop_attn(self, features, labels, training=True):
         x, _, _ = self.attention(features, training=training)
+        x = self.attn_drop(x)
         x = self.attn_fc(x)
-        x = self.attn_margin([x, labels])
+        #x = self.attn_margin([x, labels])
         return self.softmax(x)
 
     @property
     def descriptor_weights(self):
-        return (self.backbone.trainable_weights+
-                self.desc_margin.trainable_weights+
-                self.desc_fc.trainable_weights)
+        return (
+            self.backbone.trainable_weights +
+            self.desc_fc.trainable_weights +
+            self.desc_margin.trainable_weights
+        )
 
     @property
     def attention_weights(self):
-        return (self.attention.trainable_weights+
-                self.attn_margin.trainable_weights+
-                self.attn_fc.trainable_weights)
+        return (
+            self.attention.trainable_weights +
+            self.attn_fc.trainable_weights
+            #self.attn_margin.trainable_weights
+        )
 
     def call(self, inputs, training=False):
         '''
